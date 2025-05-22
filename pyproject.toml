@@ -1,0 +1,24 @@
+[project]
+name = "nagaagent"
+version = "2.1.0"
+description = "NagaAgent 2.1 - 一个强大的AI助手"
+authors = [
+    {name = "柏斯阔落", email = "1781393885@qq.com"},
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "mcp>=1.5.0",
+    "openai>=1.77.0",
+    "python-dotenv>=1.1.0",
+    "requests>=2.31.0",
+    "aiohttp>=3.9.3",
+    "asyncio>=3.4.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120 
