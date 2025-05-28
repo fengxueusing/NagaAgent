@@ -12,6 +12,7 @@ from voice.voice_config import config as vcfg # 语音配置
 from voice.voice_handler import VoiceHandler # 语音处理
 import time # 时间戳打印
 from summer.memory_manager import MemoryManager  # 新增
+from mcpserver.mcp_registry import register_all_handoffs # 导入批量注册方法
 now=lambda:time.strftime('%H:%M:%S:')+str(int(time.time()*1000)%10000) # 当前时间
 _builtin_print=print
 print=lambda *a,**k:sys.stderr.write('[print] '+(' '.join(map(str,a)))+'\n')
@@ -41,28 +42,12 @@ class NagaConversation: # 对话主类
   global _MCP_HANDOFF_REGISTERED
   if not _MCP_HANDOFF_REGISTERED:
     try:
-      logger.info("开始注册Playwright handoff处理器...")
-      s.mcp.register_handoff(
-       service_name="playwright",
-       tool_name="browser_handoff",
-       tool_description="处理所有浏览器相关操作",
-       input_schema={
-           "type": "object",
-           "properties": {
-               "url": {"type": "string", "description": "要访问的URL"},
-               "query": {"type": "string", "description": "原始查询文本"},
-               "messages": {"type": "array", "description": "对话历史"},
-               "source": {"type": "string", "description": "请求来源"}
-           },
-           "required": ["query", "messages"]
-       },
-       agent_name="Playwright Browser Agent",
-       strict_schema=False
-      )
-      logger.info("成功注册Playwright handoff处理器")
+      logger.info("开始注册所有Agent handoff处理器...")
+      register_all_handoffs(s.mcp) # 一键注册所有Agent
+      logger.info("成功注册所有Agent handoff处理器")
       _MCP_HANDOFF_REGISTERED=True
     except Exception as e:
-      logger.error(f"注册Playwright handoff处理器失败: {e}")
+      logger.error(f"注册Agent handoff处理器失败: {e}")
       traceback.print_exc(file=sys.stderr)
  def save_log(s,u,a): # 保存对话日志
   if s.dev_mode:return # 开发者模式不写日志
@@ -113,6 +98,7 @@ class NagaConversation: # 对话主类
   theme, _ = s.get_theme_and_level(u)
   return theme
  async def process(s,u):
+  import json # 保证json在本地作用域可用
   try:
    # devmode优先判断
    if u.strip()=="#devmode":
@@ -244,6 +230,47 @@ class NagaConversation: # 对话主类
      yield ("娜迦",chunk.choices[0].delta.content) # 流式yield不加换行
    print(f"GTP返回数据：{now()}") # AI返回
    
+   # 新增：自动解析plan结构并分步执行
+   try:
+    resp_json = json.loads(a)
+    if "plan" in resp_json:
+     plan = resp_json["plan"]
+     steps = plan.get("steps", [])
+     context = {}
+     for idx, step in enumerate(steps):
+      desc = step.get("desc", "")
+      action = step.get("action")
+      if action and "agent" in action:
+       agent = action["agent"]
+       params = action.get("params", {})
+       # 自动检测并转换shell命令格式
+       if agent == "shell" and isinstance(params.get("command"), str):
+        # 如果是字符串命令，自动转换为powershell数组
+        old_cmd = params["command"]
+        params["command"] = ["powershell", "-Command", old_cmd]
+        yield ("娜迦", f"[警告] 第{idx+1}步命令为字符串，已自动转换为powershell数组：{params['command']}")
+       # 支持上下文传递
+       params["context"] = context
+       yield ("娜迦", f"正在执行第{idx+1}步：{desc}（agent: {agent}）")
+       try:
+        result = await s.mcp.handoff(agent, params)
+        # 新增：只提取核心内容，避免前端显示完整json
+        try:
+            result_json = json.loads(result)
+            msg = result_json.get("message") or result_json.get("data", {}).get("content") or str(result_json.get("status"))
+        except Exception:
+            msg = str(result)
+        yield ("娜迦", f"第{idx+1}步执行结果：{msg}")
+        context[f"step_{idx+1}_result"] = result
+       except Exception as e:
+        yield ("娜迦", f"第{idx+1}步执行失败：{e}")
+      else:
+       yield ("娜迦", f"第{idx+1}步：{desc}（无需自动执行）")
+     yield ("娜迦", f"所有分步执行已完成。")
+     return
+   except Exception as e:
+    pass # 非plan结构或解析失败，继续原有流程
+   
    # 检查LLM是否建议handoff
    if "[handoff]" in a:
     service = a.split("[handoff]")[1].strip().split()[0]
@@ -292,7 +319,7 @@ class NagaConversation: # 对话主类
    s.memory.adjust_weights_periodically()
    return
   except Exception as e:
-   import traceback;traceback.print_exc(file=sys.stderr)
+   import sys, traceback;traceback.print_exc(file=sys.stderr)
    yield ("娜迦",f"[MCP异常]: {e}");return
 
 async def process_user_message(s,msg):

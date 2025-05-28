@@ -13,9 +13,9 @@ from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcpserver.mcp_registry import MCP_REGISTRY # MCP服务注册表
+from mcpserver.mcp_registry import MCP_REGISTRY, register_all_handoffs # MCP服务注册表和handoff批量注册
 
-from config import MCP_SERVICES, DEBUG, LOG_LEVEL
+from config import DEBUG, LOG_LEVEL
 
 # 配置日志
 logging.basicConfig(
@@ -207,18 +207,16 @@ class MCPManager:
                     # 继续执行，使用原始消息
                 
             # 创建代理实例
-            agent_class = self._get_agent_class(service["agent_name"])
-            if not agent_class:
-                raise ValueError(f"找不到代理类: {service['agent_name']}")
-                
-            sys.stderr.write(f"创建代理实例: {service['agent_name']}\n")
-            agent = agent_class()
-            
+            from mcpserver.mcp_registry import MCP_REGISTRY # 统一注册中心
+            agent_name = service["agent_name"]
+            agent = MCP_REGISTRY.get(agent_name)
+            if not agent:
+                raise ValueError(f"找不到已注册的Agent实例: {agent_name}")
+            sys.stderr.write(f"使用注册中心中的Agent实例: {agent_name}\n")
             # 执行handoff
             sys.stderr.write("开始执行代理handoff\n")
             result = await agent.handle_handoff(task)
             sys.stderr.write(f"代理handoff执行结果: {result}\n")
-            
             return result
             
         except Exception as e:
@@ -231,22 +229,6 @@ class MCPManager:
                 "message": error_msg
             }, ensure_ascii=False)
             
-    def _get_agent_class(self, agent_name: str):
-        """获取代理类"""
-        # 导入代理类
-        try:
-            from mcpserver.agent_playwright_master import PlaywrightAgent
-            
-            agent_map = {
-                "Playwright Browser Agent": PlaywrightAgent
-            }
-            
-            return agent_map.get(agent_name)
-            
-        except ImportError as e:
-            sys.stderr.write(f"导入代理类失败: {e}\n")
-            return None
-            
     async def connect_service(self, service_name: str) -> Optional[ClientSession]:
         """连接到指定的MCP服务
         
@@ -256,16 +238,16 @@ class MCPManager:
         Returns:
             Optional[ClientSession]: 成功返回会话对象，失败返回None
         """
-        # 检查服务是否存在且启用
-        if service_name not in MCP_SERVICES or not MCP_SERVICES[service_name]["enabled"]:
-            logger.warning(f"MCP服务 {service_name} 不存在或未启用")
+        # 直接返回None，或根据MCP_REGISTRY判断服务是否存在
+        if service_name not in MCP_REGISTRY:
+            logger.warning(f"MCP服务 {service_name} 不存在")
             return None
             
         # 如果已连接，直接返回会话
         if service_name in self.services:
             return self.services[service_name]
             
-        service_config = MCP_SERVICES[service_name]
+        service_config = MCP_REGISTRY[service_name]
         command = "python" if service_config["type"] == "python" else "node"
         
         try:
@@ -358,8 +340,8 @@ class MCPManager:
             list: 可用服务列表
         """
         return [
-            {"name": c["name"], "description": c["description"], "id": k}
-            for k, c in MCP_SERVICES.items() if c["enabled"]
+            {"name": k, "description": getattr(v, 'instructions', ''), "id": k}
+            for k, v in MCP_REGISTRY.items()
         ]
             
     def format_available_services(self) -> str:

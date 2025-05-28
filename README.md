@@ -1,12 +1,14 @@
-# NagaAgent 2.0
+# NagaAgent 2.2beta  # 版本号由config.py统一管理
 
 > 智能对话助手，支持多MCP服务、流式语音交互、主题树检索、极致精简代码风格。
+
+---
 
 ## ⚡ 快速开始
 1. 克隆项目
    ```powershell
    git clone [项目地址]
-   cd NagaAgent/2.0
+   cd NagaAgent
    ```
 2. 一键配置
    ```powershell
@@ -20,10 +22,14 @@
    .\start.bat
    ```
 
+---
+
 ## 🖥️ 系统要求
 - Windows 10/11
 - Python 3.13+
 - PowerShell 5.1+
+
+---
 
 ## 🛠️ 依赖安装与环境配置
 - 所有依赖见`requirements.txt`
@@ -37,95 +43,106 @@
   python -m playwright install chromium
   ```
 
+---
+
 ## 🌟 主要特性
-- 全局变量/路径/密钥统一`config.py`管理，支持.env和环境变量
+- **全局变量/路径/密钥统一`config.py`管理**，支持.env和环境变量，所有变量唯一、无重复定义
 - DeepSeek流式对话，支持上下文召回与主题树分片检索
 - faiss向量数据库，HNSW+PQ混合索引，异步加速，动态调整深度，权重动态调整，自动清理
 - MCP服务集成，Agent Handoff智能分发，支持自定义过滤器与回调
-- 代码极简，变量唯一，注释全中文，组件解耦，便于扩展
+- **多Agent能力扩展：浏览器、文件、代码等多种Agent即插即用，所有Agent均可通过handoff机制统一调用**
+- 代码极简，注释全中文，组件解耦，便于扩展
 - PyQt5动画与UI，支持PNG序列帧，loading动画极快
 - 日志/检索/索引/主题/参数全部自动管理
-- 支持记忆权重动态调整：每次召回/命中自动提升权重，人工/AI可标记重要记忆，遗忘时优先保留高权重内容
-- 用户可通过 `#important 关键词` 命令，主动标记相关记忆为重要，支持智能批量标记：
-  - 若召回1条，则只标记该条为重要
-  - 若召回多条，则自动批量标记所有相关记忆为重要，并反馈数量和内容摘要
-  - 示例：
-    ```
-    #important 项目进度
-    ```
-    系统会自动模糊召回与"项目进度"相关的所有历史记忆，并批量提升其权重，无需再使用#important_batch命令
-- 记忆权重、遗忘阈值等参数可在 `summer/memory_manager.py` 配置
-- 对话自动归一主题树，所有长期记忆写入单一向量库，meta中带theme字段标记主题
-- 主题归类已切换为AI自动判定，无需手动关键词配置，归类更智能准确
-- 检索时兼容主题分片：全库召回+主题字段过滤，无需维护多份索引文件
-- 检索结果优先返回高权重内容，低权重内容自动清理
-- 所有记忆清理、权重衰减、去重等参数均在`config.py`统一管理，便于灵活调整：
-  - `MIN_WEIGHT_FORGET`：长期记忆清理的最小权重
-  - `MAX_UNUSED_DAYS_FORGET`：最大未用天数
-  - `REDUNDANCY_THRESHOLD`：冗余去重相似度阈值
-  - `SHORT_TERM_MEMORY_SIZE`：短期记忆容量
-  - `LONG_TERM_CONSOLIDATE_WEIGHT`：巩固为长期记忆的权重阈值
-  - 其它权重衰减相关参数等
-- **人工/AI标记important的内容（如#important命令）一年内不会被清理**，只有一年都未被命中才会被清理，且清理时日志会有[警告]提示，便于追踪。
-- 检索日志自动记录，参数可调
-- faiss配置示例：
-  ```python
-  # config.py
-  EMBEDDING_MODEL = BASE_DIR / 'models/text2vec-base-chinese'
-  FAISS_INDEX_PATH = BASE_DIR / 'logs/faiss/faiss.index'
-  FAISS_DIM = 768
-  HNSW_M = 32
-  PQ_M = 16
-  SIM_THRESHOLD = 0.3
-  # 记忆清理相关
-  MIN_WEIGHT_FORGET = 0.5
-  MAX_UNUSED_DAYS_FORGET = 60
-  REDUNDANCY_THRESHOLD = 0.95
-  SHORT_TERM_MEMORY_SIZE = 50
-  LONG_TERM_CONSOLIDATE_WEIGHT = 3
-  ```
+- 记忆权重动态调整，支持AI/人工标记important，权重/阈值/清理策略全部在`config.py`统一管理
+- **所有前端UI与后端解耦，前端只需解析后端JSON，自动适配message/data.content等多种返回结构**
+- **前端换行符自动适配，无论后端返回`\n`还是`\\n`，PyQt界面都能正确分行显示**
+- **所有Agent的handoff schema和注册元数据已集中在`mcpserver/mcp_registry.py`，主流程和管理器极简，扩展维护更方便。只需维护一处即可批量注册/扩展所有Agent服务。**
+- **自动注册/热插拔Agent机制，新增/删除Agent只需增删py文件，无需重启主程序**
+
+---
+
+## 🗂️ 目录结构
+```
+NagaAgent/
+├── main.py                     # 主入口
+├── config.py                   # 全局配置
+├── conversation_core.py        # 对话核心（含兼容模式主逻辑）
+├── mcp_manager.py              # MCP服务管理
+├── requirements.txt            # 依赖
+├── summer/                     # faiss与向量相关
+│   ├── memory_manager.py       # 记忆管理主模块
+│   ├── summer_faiss.py         # faiss相关操作
+│   ├── faiss_index.py          # faiss索引管理
+│   ├── embedding.py            # 向量编码
+│   ├── memory_flow/            # 记忆分层相关
+│   └── summer_upgrade/         # 兼容升级相关脚本
+│       └── compat_txt_to_faiss.py # 历史对话兼容主脚本
+├── logs/                       # 日志（含历史txt对话）
+│   ├── 2025-04-27.txt
+│   ├── 2025-05-05.txt
+│   ├── ...
+│   └── faiss/                  # faiss索引与元数据
+├── voice/                      # 语音相关
+│   ├── voice_config.py
+│   └── voice_handler.py
+├── ui/                         # 前端UI
+│   ├── pyqt_chat_window.py     # PyQt聊天窗口
+│   └── response_utils.py       # 前端通用响应解析工具
+├── models/                     # 向量模型等
+├── README.md                   # 项目说明
+└── ...
+```
+
+---
+
+## 🌐 多Agent与MCP服务
+- **所有Agent的注册、schema、描述均集中在`mcpserver/mcp_registry.py`，批量管理，极简扩展**
+- 支持浏览器、文件、代码等多种Agent，全部可通过handoff机制统一调用
+- Agent能力即插即用，自动注册/热插拔，无需重启主程序
+- 典型用法示例：
+
+```python
+# 读取文件内容
+await s.mcp.handoff(
+  service_name="file",
+  task={"action": "read", "path": "test.txt"}
+)
+# 运行Python代码
+await s.mcp.handoff(
+  service_name="coder",
+  task={"action": "run", "file": "main.py"}
+)
+```
+
+---
+
+## 📝 前端UI与响应适配
+- **所有后端返回均为结构化JSON，前端通过`ui/response_utils.py`的`extract_message`方法自动适配多种返回格式**
+- 优先显示`data.content`，其次`message`，最后原样返回，兼容所有Agent
+- PyQt前端自动将所有`\n`和`\\n`换行符转为`<br>`，多行内容显示无障碍
+- UI动画、主题、昵称、透明度等全部可在`config.py`和`pyqt_chat_window.py`灵活配置
+
+---
 
 ## 🔊 流式语音交互
 - 支持语音输入（流式识别，自动转文字）与语音输出（流式合成，边播边出）
-- 启用方法：
-  1. 编辑`voice/voice_config.py`，将`ENABLED=True`
-  2. `config.py`配置`DEEPSEEK_API_KEY`
-  3. 运行主程序，空输入自动语音识别，AI回复自动语音播报
-- 依赖：`sounddevice`、`soundfile`、`pyaudio`、`openai`等
-- 语音配置参数：
-  ```python
-  # voice/voice_config.py
-  STT_MODEL = "whisper-1" # 语音识别模型
-  TTS_MODEL = "tts-1"     # 语音合成模型
-  TTS_VOICE = "alloy"     # 合成声音
-  SAMPLE_RATE = 16000      # 采样率
-  CHUNK_SIZE = 4096        # 音频块大小
-  ENABLED = True           # 启用语音
-  ```
+- 依赖与配置详见`voice/voice_config.py`和README相关章节
 
-## 🌐 浏览器自动化与MCP服务
-- 直接对话如"打开bilibili"，自动handoff到浏览器Agent
-- 支持chromium/firefox/webkit，窗口/无头可选
-- MCP服务配置：
-  ```python
-  # config.py
-  MCP_SERVICES = {
-    "playwright": {
-      "enabled": True,
-      "name": "Playwright浏览器",
-      "description": "网页浏览与内容提取",
-      "type": "python",
-      "script_path": str(BASE_DIR / "mcpserver" / "agent_playwright_master" / "playwright.py")
-    }
-  }
-  ```
-- Handoff机制：主Agent只分发任务，具体操作由子Agent完成
+---
 
-### 🚀 全自动化热插件注册
-- 所有MCP服务代码放在`mcpserver/`目录，类名以`Agent`或`Tool`结尾，系统自动扫描注册，无需手动import。
-- 新增/删除MCP服务只需增删py文件，**即插即用、热插拔**，无需重启主程序。
-- 注册表见`mcpserver/mcp_registry.py`，全局自动管理。
-- **只有`__init__`无参数（可无参实例化）的Agent/Tool类会被自动注册，带参数的类会自动跳过。**
+## 📝 其它亮点
+- 记忆权重、遗忘阈值、冗余去重、短期/长期记忆容量等全部在`config.py`统一管理，便于灵活调整
+- 主题归类、召回、权重提升、清理等全部自动化，AI/人工可标记important内容，重要内容一年内不会被清理
+- 检索日志自动记录，参数可调，faiss配置示例见`config.py`
+- 聊天窗口背景透明度、用户名、主题树召回、流式输出、侧栏动画等全部可自定义
+- 支持历史对话一键导入AI多层记忆系统，兼容主题、分层、embedding等所有新特性
+- 多Agent分步流水线自动执行机制，支持plan结构自动解析与多步执行
+
+---
+
+如需详细功能/API/扩展说明，见各模块注释与代码，所有变量唯一、注释中文、极致精简。
+
 ## 🆙 历史对话兼容升级
 - 支持将旧版txt对话内容一键导入AI多层记忆系统，兼容主题、分层、embedding等所有新特性。
 - 激活指令：
@@ -146,10 +163,9 @@
 - 兼容内容全部走AI自动主题归类与分层，完全与新系统一致。
 - 详细进度、结果和异常均有反馈，安全高效。
 
-
 ## 📚 目录结构
 ```
-2.0/
+NagaAgent/
 ├── main.py                     # 主入口
 ├── config.py                   # 全局配置
 ├── conversation_core.py        # 对话核心（含兼容模式主逻辑）
@@ -220,3 +236,26 @@ MIT License
 ### 使用方法
 - 点击侧栏即可切换立绘展开/收起，主聊天区和输入框会自动让位并隐藏/恢复。
 - 动画时长、缓动曲线等可根据需要调整源码参数。
+
+## 多Agent分步流水线自动执行机制
+
+系统支持LLM输出plan结构时自动解析并依次执行每一步：
+- 每步可包含action结构，指明agent和params参数
+- 系统自动调用对应agent，支持上下文在多步间传递
+- 每步执行结果实时反馈，全部完成后汇总
+- 其它无action的步骤仅输出描述，不自动执行
+
+示例plan结构：
+```json
+{
+  "plan": {
+    "goal": "完成复杂多步任务",
+    "steps": [
+      {"desc": "第一步描述", "action": {"agent": "file", "params": {"action": "read", "path": "test.txt"}}},
+      {"desc": "第二步描述", "action": {"agent": "coder", "params": {"action": "edit", "file": "test.py", "code": "print('hello')"}}}
+    ]
+  }
+}
+```
+
+如需自定义Agent或扩展plan协议，请参考`mcpserver/agent_xxx/`和`mcp_registry.py`。

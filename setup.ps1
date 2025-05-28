@@ -1,4 +1,5 @@
-# 一键配置脚本 for NagaAgent 2.0 (极致码高尔夫)
+# 一键配置脚本 for NagaAgent 2.1 (极致码高尔夫)
+# 版本号由config.py统一管理
 $ErrorActionPreference = "Stop" # 设置错误时停止执行
 $modelPath = "models/text2vec-base-chinese" # 模型路径
 $modelRepo = "shibing624/text2vec-base-chinese" # 模型仓库名
@@ -25,18 +26,14 @@ if (-not (Test-Path $venvPath)) {
 # 激活虚拟环境
 . "$venvPath/Scripts/Activate.ps1"
 
-# 安装依赖
-Write-Host "安装基础依赖..."
+# 安装依赖（用清华源加速）
+Write-Host "安装依赖（使用清华镜像源加速）..."
 Get-ChildItem -Filter "requirements*.txt" | ForEach-Object {
-    pip install -r $_.FullName
+    pip install -r $_.FullName -i https://pypi.tuna.tsinghua.edu.cn/simple
 }
 
-# 安装浏览器自动化依赖
-Write-Host "安装浏览器自动化依赖..."
-pip install playwright==1.52.0 greenlet==3.2.1 pyee==13.0.0
-
-# 安装浏览器驱动
-Write-Host "安装浏览器驱动..."
+# 安装playwright浏览器驱动
+Write-Host "安装playwright浏览器驱动..."
 python -m playwright install chromium
 
 # 验证playwright安装
@@ -57,4 +54,4 @@ if (-not (Test-Path $modelPath)) {
 Write-Host "环境设置完成！"
 Write-Host "如需安装其他浏览器驱动，请运行:"
 Write-Host "python -m playwright install firefox  # 安装Firefox"
-Write-Host "python -m playwright install webkit  # 安装WebKit" 
+Write-Host "python -m playwright install webkit   # 安装WebKit" 

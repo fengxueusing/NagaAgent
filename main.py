@@ -14,7 +14,7 @@ def clear():os.system('cls'if os.name=='nt'else'clear')
 with open('./ui/progress.txt','w')as f:f.write('0')
 mm = MemoryManager()
 threading.Thread(target=mm.forget_long_term, daemon=True).start()  # 启动时异步清理一次
-print('='*30+'\n娜迦对话系统已启动\n'+'='*30)
+print('='*30+'\n娜迦系统已启动\n'+'='*30)
 show_help()
 loop=asyncio.new_event_loop()
 threading.Thread(target=loop.run_forever,daemon=True).start()

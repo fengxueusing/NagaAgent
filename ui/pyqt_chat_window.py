@@ -5,6 +5,8 @@ from PyQt5.QtCore import Qt, QRect, QThread, pyqtSignal, QParallelAnimationGroup
 from PyQt5.QtGui import QColor, QPainter, QBrush, QFont, QPixmap
 from conversation_core import NagaConversation
 import os
+import config # 导入全局配置
+from ui.response_utils import extract_message  # 新增：引入消息提取工具
 BG_ALPHA=0.7 # 聊天背景透明度40%
 USER_NAME=os.getenv('COMPUTERNAME')or os.getenv('USERNAME')or'用户' # 自动识别电脑名
 MAC_BTN_SIZE=36 # mac圆按钮直径扩大1.5倍
@@ -114,7 +116,7 @@ class ChatWindow(QWidget):
         s.img.setMaximumSize(16777215,16777215)
         s.img.setStyleSheet('background:transparent;')
         stack.addWidget(s.img)
-        nick=QLabel("● 娜迦2.0",s.side)
+        nick=QLabel(f"● 娜迦{config.NAGA_VERSION}",s.side)
         nick.setStyleSheet("color:#fff;font:18pt 'Consolas';background:rgba(0,0,0,0.5);padding:12px 0 12px 0;border-radius:12px;")
         nick.setAlignment(Qt.AlignHCenter|Qt.AlignTop)
         nick.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -152,9 +154,8 @@ class ChatWindow(QWidget):
                 s.on_send();return True
         return False
     def add_user_message(s, name, content):
-        # 支持多行换行显示，将\n替换为<br>，用富文本格式
-        s.text.setTextFormat(Qt.RichText) # 设置为富文本
-        content_html = str(content).replace('\n', '<br>')
+        # 先把\\n转成\n，再把\n转成<br>，适配所有换行
+        content_html = str(content).replace('\\n', '\n').replace('\n', '<br>')
         s.text.append(f"<span style='color:#fff;font-size:12pt;font-family:Lucida Console;'>{name}</span>")
         s.text.append(f"<span style='color:#fff;font-size:16pt;font-family:Lucida Console;'>{content_html}</span>")
     def on_send(s):
@@ -164,7 +165,7 @@ class ChatWindow(QWidget):
             s.input.clear()
             if s.worker and s.worker.isRunning():return
             s.worker=Worker(s.naga,u)
-            s.worker.finished.connect(lambda a:s.add_user_message("娜迦",a))
+            s.worker.finished.connect(lambda a:s.add_user_message("娜迦", extract_message(a)))
             s.worker.start()
     def toggle_full_img(s,e):
         s.full_img^=1  # 立绘展开标志切换

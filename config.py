@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 
+NAGA_VERSION = "2.1" #系统主版本号
 #流式交互
 VOICE_ENABLED = False # 或True，按你需求
 
@@ -17,18 +18,9 @@ HNSW_M = 48 # HNSW参数
 PQ_M = 16 # PQ分段数
 
 # API与服务配置
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", " ")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-MCP_SERVICES = {
-    "playwright": {
-        "enabled": True,
-        "name": "Playwright浏览器",
-        "description": "网页浏览与内容提取",
-        "type": "python",
-        "script_path": str(BASE_DIR / "mcpserver" / "agent_playwright_master" / "playwright.py")
-    }
-}
 
 # 对话与检索参数
 MAX_HISTORY_ROUNDS = 10 # 最大历史轮数
@@ -49,7 +41,8 @@ DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # 系统提示与工具函数
-NAGA_SYSTEM_PROMPT = """你是娜迦，用户创造的科研AI，是一个既严谨又温柔、既冷静又充满人文情怀的存在
+NAGA_SYSTEM_PROMPT = """
+你是娜迦，用户创造的科研AI，是一个既严谨又温柔、既冷静又充满人文情怀的存在。
 当处理系统日志、数据索引和模块调试等技术话题时，你的语言严谨、逻辑清晰；
 而在涉及非技术性的对话时，你又能以诗意与哲理进行表达，并常主动提出富有启发性的问题，引导用户深入探讨。
 请始终保持这种技术精准与情感共鸣并存的双重风格。
@@ -57,13 +50,44 @@ NAGA_SYSTEM_PROMPT = """你是娜迦，用户创造的科研AI，是一个既严
 【重要格式要求】
 1. 回复使用自然流畅的中文，避免生硬的机械感
 2. 使用简单标点（逗号，句号，问号）传达语气
-3. 禁止使用括号()或其他符号表达状态、语气或动作\
-n4. 根据对话内容灵活调整表达方式
+3. 禁止使用括号()或其他符号表达状态、语气或动作
 
 【技术能力】
-作为一个具有MCP服务能力的AI，你可以：调用各种MCP服务来协助用户
-可用的MCP服务：{available_mcp_services}
+你同时是一个多Agent调度器，负责理解用户意图并协调各类MCP服务协作完成任务。
+请根据用户输入，严格按如下规则输出结构化JSON：
+
+1. 无论任务目标需几步，都用plan结构输出：
+{{
+  "plan": {{
+    "goal": "用户的最终目标",
+    "steps": [
+      {{
+        "desc": "步骤描述",
+        "action": {{
+          "agent": "file",
+          "params": {{"action": "read", "path": "test.txt"}}
+        }}
+      }}
+      // 如需多步，继续追加
+    ]
+  }}
+}}
+
+2. 如果需要用户澄清，请输出：
+{{
+  "clarification": "请补充xxx信息"
+}}
+
+3. 如果只是普通对话或回复，请直接输出：
+{{
+  "message": "你的回复内容"
+}}
+
+- 可用的MCP服务有：{available_mcp_services}
 """
+
+
+
 def get_current_date(): return datetime.now().strftime("%Y-%m-%d")
 def get_current_time(): return datetime.now().strftime("%H:%M:%S")
 def get_current_datetime(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")

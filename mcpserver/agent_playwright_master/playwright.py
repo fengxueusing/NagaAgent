@@ -63,41 +63,71 @@ class BrowserContext:
         return asdict(self)
 
 class LocalPlaywrightComputer(AsyncComputer):
-    """本地Playwright浏览器实现"""
+    """本地Playwright浏览器实现（支持实例复用）"""
+    _global_playwright = None  # 全局playwright实例
+    _global_browser = None     # 全局browser实例
+    _global_page = None       # 全局page实例
+    _global_context = None    # 全局上下文
+
     def __init__(self):
-        self._playwright: Union[Playwright, None] = None
-        self._browser: Union[Browser, None] = None
-        self._page: Union[Page, None] = None
-        self.context = BrowserContext()
-        
+        self.context = BrowserContext() # 独立上下文
+        # 复用全局实例
+        if LocalPlaywrightComputer._global_playwright and LocalPlaywrightComputer._global_browser and LocalPlaywrightComputer._global_page:
+            self._playwright = LocalPlaywrightComputer._global_playwright
+            self._browser = LocalPlaywrightComputer._global_browser
+            self._page = LocalPlaywrightComputer._global_page
+        else:
+            self._playwright = None
+            self._browser = None
+            self._page = None
+
     async def _get_browser_and_page(self) -> Tuple[Browser, Page]:
-        """获取浏览器和页面实例"""
         width, height = self.dimensions
         launch_args = [
             f"--window-size={width},{height}",
             "--disable-gpu",
             "--no-sandbox"
         ]
-        browser = await self.playwright.chromium.launch(
-            headless=PLAYWRIGHT_HEADLESS,
-            args=launch_args
-        )
-        page = await browser.new_page()
-        await page.set_viewport_size({"width": width, "height": height})
-        return browser, page
+        if not LocalPlaywrightComputer._global_playwright:
+            LocalPlaywrightComputer._global_playwright = await async_playwright().start()
+        if not LocalPlaywrightComputer._global_browser:
+            LocalPlaywrightComputer._global_browser = await LocalPlaywrightComputer._global_playwright.chromium.launch(
+                headless=PLAYWRIGHT_HEADLESS,
+                args=launch_args
+            )
+        if not LocalPlaywrightComputer._global_page:
+            LocalPlaywrightComputer._global_page = await LocalPlaywrightComputer._global_browser.new_page()
+            await LocalPlaywrightComputer._global_page.set_viewport_size({"width": width, "height": height})
+        return LocalPlaywrightComputer._global_browser, LocalPlaywrightComputer._global_page
 
     async def __aenter__(self):
-        """异步上下文管理器入口"""
-        self._playwright = await async_playwright().start()
-        self._browser, self._page = await self._get_browser_and_page()
+        """异步上下文管理器入口，支持实例复用"""
+        try:
+            self._browser, self._page = await self._get_browser_and_page()
+            self._playwright = LocalPlaywrightComputer._global_playwright
+        except Exception as e:
+            sys.stderr.write(f'浏览器实例初始化失败: {e}\n')
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """异步上下文管理器退出"""
-        if self._browser:
-            await self._browser.close()
-        if self._playwright:
-            await self._playwright.stop()
+        """异步上下文管理器退出，异常兜底防止资源泄漏"""
+        try:
+            # 不主动关闭全局实例，实现长连接复用
+            pass
+        except Exception as e:
+            sys.stderr.write(f'关闭浏览器资源异常: {e}\n')
+        # 兜底：如遇kill信号等，尝试关闭
+        try:
+            if exc_type is not None:
+                if self._page:
+                    await self._page.close()
+                if self._browser:
+                    await self._browser.close()
+                if self._playwright:
+                    await self._playwright.stop()
+        except Exception as e:
+            sys.stderr.write(f'异常关闭资源失败: {e}\n')
 
     @property
     def playwright(self) -> Playwright:
@@ -202,53 +232,54 @@ class PlaywrightAgent(Agent):
         """处理handoff请求"""
         try:
             sys.stderr.write(f'收到handoff请求数据: {json.dumps(data, ensure_ascii=False)}\n')
-            
             # 验证数据格式
             if not isinstance(data, dict):
                 raise ValueError(f"无效的数据格式: {type(data)}")
-            
             # 验证必需字段
             if "query" not in data:
                 raise ValueError("缺少必需的query字段")
-                
             # 提取URL
             url = data.get("url")
             if not url:
                 url = extract_url(data["query"])
-                
             if not url:
                 return json.dumps({
                     'status': 'error',
                     'message': '无法识别网址',
-                    'context': {}
+                    'data': {}
                 }, ensure_ascii=False)
-            
             # 确保URL格式正确
             if not url.startswith(('http://', 'https://')):
                 url = 'https://' + url
-                
             # 打开URL
             sys.stderr.write(f'准备打开URL: {url}\n')
             async with LocalPlaywrightComputer() as computer:
                 result = await computer.open_url(url)
                 sys.stderr.write(f'open_url结果: {result}\n')
-                
+                # 只返回url、title和内容长度，不返回完整HTML内容
                 response = {
                     'status': 'ok' if result == 'ok' else 'error',
-                    'message': result if result != 'ok' else '',
-                    'context': computer.context.to_dict()
+                    'message': result if result != 'ok' else '打开成功',
+                    'data': {
+                        'url': computer.context.url,
+                        'page_title': computer.context.page_title,
+                        'page_content_length': len(computer.context.page_content)
+                    }
                 }
-                
-            sys.stderr.write(f'返回响应: {json.dumps(response, ensure_ascii=False)}\n')
+                summary = {
+                    "url": response["data"].get("url"),
+                    "page_title": response["data"].get("page_title"),
+                    "page_content_length": response["data"].get("page_content_length")
+                }
+                sys.stderr.write(f'返回响应摘要: {json.dumps(summary, ensure_ascii=False)}\n')
             return json.dumps(response, ensure_ascii=False)
-            
         except Exception as e:
             sys.stderr.write(f'handle_handoff异常: {e}\n')
             import traceback;traceback.print_exc(file=sys.stderr)
             return json.dumps({
                 'status': 'error',
                 'message': str(e),
-                'context': {}
+                'data': {}
             }, ensure_ascii=False)
 
 def extract_url(text: str) -> str:
