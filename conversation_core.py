@@ -143,74 +143,6 @@ class NagaConversation: # 对话主类
     else:
      yield ("系统", "当前为系统兼容升级模式，仅支持import指令。如需退出，请输入exit。")
      return
-   # 检查是否需要浏览器操作
-   if any(x in u.lower() for x in ["bilibili","b站","浏览器","网站","打开","访问","youtube","谷歌","百度","github"]):
-    logger.info(f"检测到浏览器操作请求: {u}")
-    
-    # 检查MCP服务
-    logger.info(f"当前可用服务: {s.mcp.format_available_services()}")
-    
-    # 构造handoff数据
-    messages = s.messages[-5:] + [{"role": "user", "content": u}]
-    task_data = {
-       "messages": messages,
-       "query": u,
-       "url": extract_url(u),
-       "source": "conversation"
-    }
-    logger.info(f"构造的task数据: {json.dumps(task_data, ensure_ascii=False)}")
-    
-    try:
-        logger.info("开始执行handoff操作...")
-        result = await s.mcp.handoff(
-         service_name="playwright",
-         task=task_data,
-         input_history=messages,
-         pre_items=s.messages[:-5] if len(s.messages) > 5 else [],
-         new_items=[{"role": "user", "content": u}],
-         metadata={
-             "type": "browser_request",
-             "timestamp": datetime.now().isoformat(),
-             "source": "conversation",
-             "dev_mode": s.dev_mode
-         }
-        )
-        logger.info(f"handoff返回结果: {result}")
-        
-        if result:
-            try:
-                response = json.loads(result) if isinstance(result, str) else result
-                logger.debug(f"解析的响应: {json.dumps(response, ensure_ascii=False)}")
-                
-                # 检查过滤后的消息
-                filtered_messages = response.get("filtered_messages", {})
-                if filtered_messages:
-                    logger.info(f"过滤后的消息统计: {filtered_messages.get('metadata', {})}")
-                
-                if response.get("status") == "ok":
-                    yield ("娜迦","已成功打开网页");return
-                else:
-                    error_msg = f"打开网页失败: {response.get('message', '未知错误')}"
-                    logger.error(error_msg)
-                    yield ("娜迦",error_msg);return
-            except json.JSONDecodeError as e:
-                error_msg = f"解析响应失败: {str(e)}, 原始响应: {result}"
-                logger.error(error_msg)
-                yield ("娜迦",error_msg);return
-            except Exception as e:
-                error_msg = f"处理响应时发生异常: {str(e)}"
-                logger.error(error_msg)
-                traceback.print_exc(file=sys.stderr)
-                yield ("娜迦",error_msg);return
-        else:
-            logger.error("handoff返回空结果")
-            yield ("娜迦","浏览器操作失败: 未收到响应");return
-    except Exception as e:
-        error_msg = f"执行handoff时发生异常: {str(e)}"
-        logger.error(error_msg)
-        traceback.print_exc(file=sys.stderr)
-        yield ("娜迦",error_msg);return
-   
    print(f"语音转文本结束，开始发送给GTP：{now()}") # 语音转文本结束/AI请求前
    theme, level = s.get_theme_and_level(u)
    ctx = s.memory.build_context(u, k=5)
@@ -257,7 +189,7 @@ class NagaConversation: # 对话主类
         # 新增：只提取核心内容，避免前端显示完整json
         try:
             result_json = json.loads(result)
-            msg = result_json.get("message") or result_json.get("data", {}).get("content") or str(result_json.get("status"))
+            msg = result_json.get("data", {}).get("content") or result_json.get("message") or str(result_json.get("status"))
         except Exception:
             msg = str(result)
         yield ("娜迦", f"第{idx+1}步执行结果：{msg}")

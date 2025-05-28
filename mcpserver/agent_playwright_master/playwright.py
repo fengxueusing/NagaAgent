@@ -232,16 +232,43 @@ class PlaywrightAgent(Agent):
         """处理handoff请求"""
         try:
             sys.stderr.write(f'收到handoff请求数据: {json.dumps(data, ensure_ascii=False)}\n')
+            # 参数自适应兼容LLM plan通用格式
+            url = data.get("url")
+            query = data.get("query")
+            messages = data.get("messages", [])
+            action = data.get("action", "")
+
+            # 如果query缺失，自动用url或action补全
+            if not query:
+                if isinstance(action, str) and action.startswith("open_"):
+                    query = f"{action} {url or ''}".strip()
+                elif url:
+                    query = url
+                else:
+                    query = "浏览器操作"
+
+            # 如果url缺失，尝试从action或query中提取
+            if not url:
+                if isinstance(action, dict) and "url" in action:
+                    url = action["url"]
+                elif isinstance(query, str) and query.startswith("http"):
+                    url = query
+                elif isinstance(action, str) and action.startswith("http"):
+                    url = action
+
+            # messages兼容空
+            if not isinstance(messages, list):
+                messages = []
+
             # 验证数据格式
             if not isinstance(data, dict):
                 raise ValueError(f"无效的数据格式: {type(data)}")
             # 验证必需字段
-            if "query" not in data:
+            if not query:
                 raise ValueError("缺少必需的query字段")
             # 提取URL
-            url = data.get("url")
             if not url:
-                url = extract_url(data["query"])
+                url = extract_url(query)
             if not url:
                 return json.dumps({
                     'status': 'error',
