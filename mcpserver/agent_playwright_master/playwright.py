@@ -5,6 +5,7 @@ import base64,asyncio,sys,re,json,time
 from typing import Literal, Union, Optional, Any, Dict, List, Tuple
 from dataclasses import dataclass, asdict
 from .message_filter import filter_messages
+from .playwright_search import search_web, SearchEngine
 
 print=lambda *a,**k:sys.stderr.write('[print] '+(' '.join(map(str,a)))+'\n')
 
@@ -216,6 +217,24 @@ class LocalPlaywrightComputer(AsyncComputer):
             sys.stderr.write(f'打开URL失败: {e}\n')
             return str(e)
 
+    async def type_by_selector(self, selector: str, text: str) -> str:
+        """按CSS选择器输入文本"""
+        try:
+            await self.page.fill(selector, text)
+            return 'ok'
+        except Exception as e:
+            sys.stderr.write(f'按selector输入失败: {e}\n')
+            return str(e)
+
+    async def click_by_selector(self, selector: str) -> str:
+        """按CSS选择器点击元素"""
+        try:
+            await self.page.click(selector)
+            return 'ok'
+        except Exception as e:
+            sys.stderr.write(f'按selector点击失败: {e}\n')
+            return str(e)
+
 class PlaywrightAgent(Agent):
     """Playwright浏览器代理"""
     def __init__(self):
@@ -229,77 +248,127 @@ class PlaywrightAgent(Agent):
         sys.stderr.write('PlaywrightAgent初始化完成\n')
 
     async def handle_handoff(self, data: dict) -> str:
-        """处理handoff请求"""
+        """智能处理handoff请求：支持url直达、query自动识别网址或搜索并打开第一个结果，并支持按selector输入/点击"""
         try:
             sys.stderr.write(f'收到handoff请求数据: {json.dumps(data, ensure_ascii=False)}\n')
-            # 参数自适应兼容LLM plan通用格式
-            url = data.get("url")
-            query = data.get("query")
-            messages = data.get("messages", [])
-            action = data.get("action", "")
-
-            # 如果query缺失，自动用url或action补全
-            if not query:
-                if isinstance(action, str) and action.startswith("open_"):
-                    query = f"{action} {url or ''}".strip()
-                elif url:
-                    query = url
-                else:
-                    query = "浏览器操作"
-
-            # 如果url缺失，尝试从action或query中提取
-            if not url:
-                if isinstance(action, dict) and "url" in action:
-                    url = action["url"]
-                elif isinstance(query, str) and query.startswith("http"):
-                    url = query
-                elif isinstance(action, str) and action.startswith("http"):
-                    url = action
-
-            # messages兼容空
-            if not isinstance(messages, list):
-                messages = []
-
-            # 验证数据格式
             if not isinstance(data, dict):
                 raise ValueError(f"无效的数据格式: {type(data)}")
-            # 验证必需字段
-            if not query:
-                raise ValueError("缺少必需的query字段")
-            # 提取URL
-            if not url:
-                url = extract_url(query)
-            if not url:
-                return json.dumps({
-                    'status': 'error',
-                    'message': '无法识别网址',
-                    'data': {}
-                }, ensure_ascii=False)
-            # 确保URL格式正确
-            if not url.startswith(('http://', 'https://')):
-                url = 'https://' + url
-            # 打开URL
-            sys.stderr.write(f'准备打开URL: {url}\n')
-            async with LocalPlaywrightComputer() as computer:
-                result = await computer.open_url(url)
-                sys.stderr.write(f'open_url结果: {result}\n')
-                # 只返回url、title和内容长度，不返回完整HTML内容
-                response = {
-                    'status': 'ok' if result == 'ok' else 'error',
-                    'message': result if result != 'ok' else '打开成功',
-                    'data': {
-                        'url': computer.context.url,
-                        'page_title': computer.context.page_title,
-                        'page_content_length': len(computer.context.page_content)
+            url = data.get("url")
+            query = data.get("query")
+            action = data.get("action", "")
+            selector = data.get("selector")
+            text = data.get("text")
+            # 支持action=open，直接打开url
+            if action == "open" and url:
+                if not url.startswith(('http://', 'https://')):
+                    url = 'https://' + url
+                sys.stderr.write(f'直接打开URL: {url}\n')
+                async with LocalPlaywrightComputer() as computer:
+                    result = await computer.open_url(url)
+                    response = {
+                        'status': 'ok' if result == 'ok' else 'error',
+                        'message': result if result != 'ok' else '打开成功',
+                        'query': query if query else url,
+                        'data': {
+                            'url': computer.context.url,
+                            'page_title': computer.context.page_title,
+                            'page_content_length': len(computer.context.page_content)
+                        }
                     }
-                }
-                summary = {
-                    "url": response["data"].get("url"),
-                    "page_title": response["data"].get("page_title"),
-                    "page_content_length": response["data"].get("page_content_length")
-                }
-                sys.stderr.write(f'返回响应摘要: {json.dumps(summary, ensure_ascii=False)}\n')
-            return json.dumps(response, ensure_ascii=False)
+                return json.dumps(response, ensure_ascii=False)
+            # 支持action=type，优先selector输入
+            if action == "type" and selector and text is not None:
+                async with LocalPlaywrightComputer() as computer:
+                    result = await computer.type_by_selector(selector, text)
+                    response = {
+                        'status': 'ok' if result == 'ok' else 'error',
+                        'message': result if result == 'ok' else f'输入失败: {result}',
+                        'query': query,
+                        'data': {
+                            'selector': selector,
+                            'text': text
+                        }
+                    }
+                return json.dumps(response, ensure_ascii=False)
+            # 支持action=click，优先selector点击
+            if action == "click" and selector:
+                async with LocalPlaywrightComputer() as computer:
+                    result = await computer.click_by_selector(selector)
+                    response = {
+                        'status': 'ok' if result == 'ok' else 'error',
+                        'message': result if result == 'ok' else f'点击失败: {result}',
+                        'query': query,
+                        'data': {
+                            'selector': selector
+                        }
+                    }
+                return json.dumps(response, ensure_ascii=False)
+            # 兼容原有url/query/搜索逻辑
+            # 优先url
+            if url:
+                if not url.startswith(('http://', 'https://')):
+                    url = 'https://' + url
+                sys.stderr.write(f'直接打开URL: {url}\n')
+                async with LocalPlaywrightComputer() as computer:
+                    result = await computer.open_url(url)
+                    response = {
+                        'status': 'ok' if result == 'ok' else 'error',
+                        'message': result if result != 'ok' else '打开成功',
+                        'query': query if query else url,
+                        'data': {
+                            'url': computer.context.url,
+                            'page_title': computer.context.page_title,
+                            'page_content_length': len(computer.context.page_content)
+                        }
+                    }
+                return json.dumps(response, ensure_ascii=False)
+            # 其次query
+            if query:
+                # 判断是否为网址
+                url2 = extract_url(query)
+                if url2:
+                    if not url2.startswith(('http://', 'https://')):
+                        url2 = 'https://' + url2
+                    sys.stderr.write(f'query被识别为网址，自动打开: {url2}\n')
+                    async with LocalPlaywrightComputer() as computer:
+                        result = await computer.open_url(url2)
+                        response = {
+                            'status': 'ok' if result == 'ok' else 'error',
+                            'message': result if result != 'ok' else '打开成功',
+                            'query': query,
+                            'data': {
+                                'url': computer.context.url,
+                                'page_title': computer.context.page_title,
+                                'page_content_length': len(computer.context.page_content)
+                            }
+                        }
+                    return json.dumps(response, ensure_ascii=False)
+                # 否则视为搜索内容
+                engine = data.get("engine", "")
+                if not engine:
+                    engine = "google" # 默认使用google
+                sys.stderr.write(f'query被视为搜索内容，执行搜索: {query}, engine={engine}\n')
+                search_result = await search_web(query, engine)
+                # 自动打开第一个结果
+                if search_result.get("status") == "ok" and search_result.get("data", {}).get("results"):
+                    first_result = search_result["data"]["results"][0]
+                    url3 = first_result.get("url")
+                    if url3:
+                        sys.stderr.write(f'自动打开搜索第一个结果: {url3}\n')
+                        async with LocalPlaywrightComputer() as computer:
+                            result = await computer.open_url(url3)
+                            if result == 'ok':
+                                search_result["data"]["opened_url"] = url3
+                                search_result["data"]["page_title"] = computer.context.page_title
+                                search_result["data"]["page_content_length"] = len(computer.context.page_content)
+                search_result["query"] = query
+                return json.dumps(search_result, ensure_ascii=False)
+            # 兜底
+            return json.dumps({
+                'status': 'error',
+                'message': '未提供url或query',
+                'data': {}
+            }, ensure_ascii=False)
         except Exception as e:
             sys.stderr.write(f'handle_handoff异常: {e}\n')
             import traceback;traceback.print_exc(file=sys.stderr)
@@ -310,35 +379,17 @@ class PlaywrightAgent(Agent):
             }, ensure_ascii=False)
 
 def extract_url(text: str) -> str:
-    """从文本中提取URL"""
+    """从文本中提取URL，仅正则判断，不做常见网站名称映射"""
     if not text:
         return ""
-        
     # 直接URL模式
-    url_pattern = r'https?://[^\s<>"]+|www\.[^\s<>"]+'
+    url_pattern = r'https?://[^\s<>"\']+|www\.[^\s<>"\']+'
     urls = re.findall(url_pattern, text)
     if urls:
         url = urls[0]
         if not url.startswith('http'):
             url = 'https://' + url
         return url
-    
-    # 常见网站名称映射
-    site_map = {
-        'bilibili': 'https://www.bilibili.com',
-        'b站': 'https://www.bilibili.com',
-        'youtube': 'https://www.youtube.com',
-        'google': 'https://www.google.com',
-        'baidu': 'https://www.baidu.com',
-        '百度': 'https://www.baidu.com',
-        'github': 'https://github.com',
-    }
-    
-    # 检查是否包含已知网站名称
-    for site, url in site_map.items():
-        if site.lower() in text.lower():
-            return url
-            
     return ""
 
 if __name__=="__main__":

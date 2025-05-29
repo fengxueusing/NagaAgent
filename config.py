@@ -18,7 +18,7 @@ HNSW_M = 48 # HNSW参数
 PQ_M = 16 # PQ分段数
 
 # API与服务配置
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-e8e652dd3bad4828ac4392fc2d68be76")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", " ")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
