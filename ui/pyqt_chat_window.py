@@ -1,6 +1,6 @@
 import sys, os; sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + '/..'))
 import sys, datetime
-from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QSizePolicy, QGraphicsBlurEffect, QHBoxLayout, QLabel, QVBoxLayout, QStackedLayout, QPushButton
+from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QSizePolicy, QGraphicsBlurEffect, QHBoxLayout, QLabel, QVBoxLayout, QStackedLayout, QPushButton, QStackedWidget
 from PyQt5.QtCore import Qt, QRect, QThread, pyqtSignal, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt5.QtGui import QColor, QPainter, QBrush, QFont, QPixmap
 from conversation_core import NagaConversation
@@ -84,10 +84,21 @@ class ChatWindow(QWidget):
         main=QHBoxLayout(s);main.setContentsMargins(0,100,0,0);main.setSpacing(0)
         chat_area=QWidget(s)
         vlay=QVBoxLayout(chat_area);vlay.setContentsMargins(0,0,0,0);vlay.setSpacing(0)
-        s.text = QTextEdit(chat_area)
+        # 用QStackedWidget管理聊天区和设置页
+        s.chat_stack = QStackedWidget(chat_area)
+        s.chat_stack.setStyleSheet("""
+            QStackedWidget {
+                background: transparent;
+                border: none;
+            }
+        """) # 保证背景穿透
+        s.text = QTextEdit() # 聊天历史
         s.text.setReadOnly(True)
-        s.text.setStyleSheet(f"background:rgba(17,17,17,{int(BG_ALPHA*255)});color:#fff;border-radius:24px;border:none;font:{fontbig}pt '{fontfam}';")
-        vlay.addWidget(s.text,1)
+        s.text.setStyleSheet(f"background:rgba(17,17,17,{int(BG_ALPHA*255)});color:#fff;border-radius:24px;border:none;font:16pt 'Lucida Console';")
+        s.chat_stack.addWidget(s.text) # index 0 聊天页
+        s.settings_page = s.create_settings_page() # index 1 设置页
+        s.chat_stack.addWidget(s.settings_page)
+        vlay.addWidget(s.chat_stack, 1)
         s.input_wrap=QWidget(chat_area)
         s.input_wrap.setFixedHeight(48)
         hlay=QHBoxLayout(s.input_wrap);hlay.setContentsMargins(0,0,0,0);hlay.setSpacing(0)
@@ -131,7 +142,25 @@ class ChatWindow(QWidget):
         s.setLayout(main)
         s.titlebar = TitleBar('NAGA AGENT', s)
         s.titlebar.setGeometry(0,0,s.width(),100)
-        s.side.mousePressEvent=s.toggle_full_img # 侧栏点击切换立绘
+        s.side.mousePressEvent=s.toggle_full_img # 侧栏点击切换聊天/设置
+
+    def create_settings_page(s):
+        from ui.settings_api_config import ApiConfigWidget  # 延迟导入避免循环依赖
+        page = QWidget()
+        page.setObjectName("SettingsPage")
+        page.setStyleSheet("""
+            #SettingsPage {
+                background: transparent;
+                border-radius: 24px;
+                padding: 24px;
+            }
+        """)
+        layout = QVBoxLayout(page)
+        # 嵌入API配置界面
+        api_widget = ApiConfigWidget(page)
+        layout.addWidget(api_widget)
+        return page
+
     def resizeEvent(s, e):
         s.titlebar.setGeometry(0,0,s.width(),100)
         if hasattr(s,'img') and hasattr(s,'nick'):
@@ -154,7 +183,7 @@ class ChatWindow(QWidget):
                 s.on_send();return True
         return False
     def add_user_message(s, name, content):
-        # 先把\\n转成\n，再把\n转成<br>，适配所有换行
+        # 先把\n转成\n，再把\n转成<br>，适配所有换行
         content_html = str(content).replace('\\n', '\n').replace('\n', '<br>')
         s.text.append(f"<span style='color:#fff;font-size:12pt;font-family:Lucida Console;'>{name}</span>")
         s.text.append(f"<span style='color:#fff;font-size:16pt;font-family:Lucida Console;'>{content_html}</span>")
@@ -222,10 +251,18 @@ class ChatWindow(QWidget):
         if s.full_img:
             s.side.setStyleSheet("background:transparent;border-radius:24px;")
             s.side.enterEvent = s.side.leaveEvent = lambda e: None
+            s.chat_stack.setCurrentIndex(1)  # 切换到设置页
+            s.input_wrap.hide()  # 隐藏输入框
+            s.titlebar.text = "SETTING PAGE"  # 修改标题
+            s.titlebar.update()  # 立即刷新标题栏
         else:
             s.side.setStyleSheet(f"background:rgba(17,17,17,{int(BG_ALPHA*255)});border-radius:24px;")
             s.side.enterEvent = lambda e: s.side.setStyleSheet("background:transparent;border-radius:24px;")
             s.side.leaveEvent = lambda e: s.side.setStyleSheet(f"background:rgba(17,17,17,{int(BG_ALPHA*255)});border-radius:24px;")
+            s.chat_stack.setCurrentIndex(0)  # 切换回聊天页
+            s.input_wrap.show()  # 显示输入框
+            s.titlebar.text = "NAGA AGENT"  # 恢复标题
+            s.titlebar.update()  # 立即刷新标题栏
         # 立绘图片同步缩放
         p = os.path.join(os.path.dirname(__file__), 'standby.png')
         q = QPixmap(p)

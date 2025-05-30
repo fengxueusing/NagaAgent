@@ -1,4 +1,4 @@
-# NagaAgent 2.2beta  # 版本号由config.py统一管理
+# NagaAgent 2.2beta 
 
 > 智能对话助手，支持多MCP服务、流式语音交互、主题树检索、极致精简代码风格。
 
