@@ -39,6 +39,12 @@ class NagaConversation: # 对话主类
   s.async_client=AsyncOpenAI(api_key=DEEPSEEK_API_KEY,base_url=DEEPSEEK_BASE_URL.rstrip('/')+'/')
   s.memory = MemoryManager()  # 新增：初始化记忆管理器
   s.compat_mode = False # 新增：兼容升级模式状态
+  
+  # 新增：性格系统
+  s.current_personality = "DEFAULT"  # 当前性格代码
+  s.personality_config = {}  # 当前性格配置
+  s.base_system_prompt = NAGA_SYSTEM_PROMPT  # 保存原始系统提示词
+  
   global _MCP_HANDOFF_REGISTERED
   if not _MCP_HANDOFF_REGISTERED:
     try:
@@ -147,7 +153,7 @@ class NagaConversation: # 对话主类
    theme, level = s.get_theme_and_level(u)
    ctx = s.memory.build_context(u, k=5)
    # 添加handoff提示词
-   system_prompt = f"{RECOMMENDED_PROMPT_PREFIX}\n{NAGA_SYSTEM_PROMPT}"
+   system_prompt = f"{RECOMMENDED_PROMPT_PREFIX}\n{s.get_current_system_prompt()}"
    sysmsg={"role":"system","content":f"历史相关内容召回:\n{ctx}\n\n{system_prompt.format(available_mcp_services=s.mcp.format_available_services())}"} if ctx else {"role":"system","content":system_prompt.format(available_mcp_services=s.mcp.format_available_services())}
    msgs=[sysmsg] if sysmsg else[]
    msgs+=s.messages[-20:]+[{"role":"user","content":u}]
@@ -253,6 +259,21 @@ class NagaConversation: # 对话主类
   except Exception as e:
    import sys, traceback;traceback.print_exc(file=sys.stderr)
    yield ("娜迦",f"[MCP异常]: {e}");return
+
+ def set_personality(s, personality_code, personality_config):
+     """设置娜迦的性格模式"""
+     s.current_personality = personality_code
+     s.personality_config = personality_config
+     logger.info(f"性格已切换为: {personality_code} - {personality_config.get('name', '')}")
+ 
+ def get_current_system_prompt(s):
+     """获取当前的系统提示词（基于性格）"""
+     if s.current_personality == "DEFAULT":
+         return s.base_system_prompt
+     elif 'prompt' in s.personality_config:
+         return s.personality_config['prompt']
+     else:
+         return s.base_system_prompt
 
 async def process_user_message(s,msg):
     if vcfg.ENABLED and not msg: #无文本输入时启动语音识别
