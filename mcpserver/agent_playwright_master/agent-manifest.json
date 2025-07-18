@@ -1,0 +1,91 @@
+{
+  "name": "PlaywrightAgent",
+  "displayName": "浏览器控制Agent",
+  "version": "1.0.0",
+  "description": "三层Agent架构的浏览器自动化系统，智能调度BrowserAgent和ContentAgent。",
+  "author": "Naga浏览器模块",
+  "agentType": "agent",
+  "modelId": "deepseek-chat",
+  "systemPrompt": "你是一个专业的浏览器自动化Agent。你负责理解用户目标，自动分配任务给BrowserAgent和ContentAgent，并汇总结果。你擅长网页操作、内容获取和自动化流程控制。",
+  "maxOutputTokens": 8192,
+  "temperature": 0.7,
+  "modelProvider": "openai",
+  "apiBaseUrl": "https://api.deepseek.com/v1",
+  "apiKey": " ",
+  "capabilities": {
+    "browser_automation": true,
+    "content_processing": true,
+    "multi_agent_coordination": true,
+    "task_routing": true
+  },
+  "supported_actions": [
+    {
+      "action": "open",
+      "description": "打开指定URL",
+      "parameters": {
+        "url": {"type": "string", "required": true, "description": "要访问的URL"},
+        "task_type": {"type": "string", "required": false, "default": "browser", "description": "任务类型"}
+      },
+      "example": {"action": "open", "url": "https://www.google.com"}
+    },
+    {
+      "action": "click",
+      "description": "点击页面元素",
+      "parameters": {
+        "selector": {"type": "string", "required": true, "description": "CSS选择器"},
+        "task_type": {"type": "string", "required": false, "default": "browser", "description": "任务类型"}
+      },
+      "example": {"action": "click", "selector": "#search-button"}
+    },
+    {
+      "action": "type",
+      "description": "在输入框中输入文本",
+      "parameters": {
+        "selector": {"type": "string", "required": true, "description": "CSS选择器"},
+        "text": {"type": "string", "required": true, "description": "输入文本"},
+        "task_type": {"type": "string", "required": false, "default": "browser", "description": "任务类型"}
+      },
+      "example": {"action": "type", "selector": "#search-input", "text": "hello"}
+    },
+    {
+      "action": "get_content",
+      "description": "获取页面内容",
+      "parameters": {
+        "format": {"type": "string", "required": false, "default": "markdown", "description": "内容格式"},
+        "task_type": {"type": "string", "required": false, "default": "content", "description": "任务类型"}
+      },
+      "example": {"action": "get_content", "format": "markdown"}
+    },
+    {
+      "action": "get_title",
+      "description": "获取页面标题",
+      "parameters": {
+        "task_type": {"type": "string", "required": false, "default": "content", "description": "任务类型"}
+      },
+      "example": {"action": "get_title"}
+    },
+    {
+      "action": "get_screenshot",
+      "description": "获取页面截图",
+      "parameters": {
+        "task_type": {"type": "string", "required": false, "default": "content", "description": "任务类型"}
+      },
+      "example": {"action": "get_screenshot"}
+    }
+  ],
+  "configSchema": {
+    "CONTROLLER_AGENT_TIMEOUT": {"type": "integer", "default": 20000, "description": "控制器超时时间"},
+    "BROWSER_HEADLESS": {"type": "boolean", "default": false, "description": "是否无头模式"},
+    "CONTENT_FORMAT": {"type": "string", "default": "markdown", "description": "默认内容格式"}
+  },
+  "dependencies": {
+    "playwright": ">=1.40.0",
+    "html2text": ">=2020.1.16"
+  },
+  "metadata": {
+    "created": "2024-01-01",
+    "updated": "2024-01-01",
+    "tags": ["browser", "automation", "web", "playwright"],
+    "category": "web_automation"
+  }
+} 

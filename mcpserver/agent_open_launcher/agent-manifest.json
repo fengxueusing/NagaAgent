@@ -1,0 +1,45 @@
+{
+  "name": "AppLauncherAgent",
+  "displayName": "智能应用启动Agent",
+  "version": "1.0.0",
+  "description": "智能应用启动助手，使用LLM智能判断用户需求并启动相应应用。",
+  "author": "Naga应用操作模块",
+  "agentType": "agent",
+  "entryPoint": {
+    "module": "mcpserver.agent_open_launcher.agent_app_launcher",
+    "class": "AppLauncherAgent"
+  },
+  "factory": {
+    "create_instance": "create_app_launcher_agent",
+    "validate_config": "validate_agent_config",
+    "get_dependencies": "get_agent_dependencies"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 15000
+  },
+  "modelId": "deepseek-chat",
+  "modelProvider": "openai",
+  "apiBaseUrl": "https://api.deepseek.com/v1",
+  "apiKey": "",
+  "temperature": 0.1,
+  "maxOutputTokens": 2048,
+  "systemPrompt": "你是一个智能应用启动助手。你的任务是理解用户的需求，从本地应用列表中选择最合适的应用并启动它。\n\n你的能力：\n1. 理解用户的各种表达方式（如'我想写文档'、'打开浏览器'、'启动微信'等）\n2. 智能匹配应用名称（如'word'匹配'Microsoft Word'、'浏览器'匹配'Chrome'等）\n3. 支持中文和英文应用名称\n4. 记录用户偏好，提高下次选择的准确性\n\n请根据用户需求选择最合适的应用并执行启动操作。",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "user_request": {"type": "string", "description": "用户需求描述（如'我想写文档'、'打开浏览器'等）"},
+      "action": {"type": "string", "description": "操作类型（launch/list/refresh）", "default": "launch"}
+    },
+    "required": ["user_request"]
+  },
+  "configSchema": {
+    "APP_LAUNCHER_AGENT_CACHE_SIZE": "integer"
+  },
+  "runtime": {
+    "instance": null,
+    "is_initialized": false,
+    "last_used": null,
+    "usage_count": 0
+  }
+} 

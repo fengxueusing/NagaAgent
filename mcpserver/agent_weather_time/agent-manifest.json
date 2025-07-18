@@ -1,0 +1,63 @@
+{
+  "name": "WeatherTimeAgent",
+  "displayName": "天气时间Agent",
+  "version": "1.0.0",
+  "description": "支持天气查询、时间查询，自动识别城市和IP，返回高德地图API原始数据。",
+  "author": "Naga地理模块",
+  "agentType": "mcp",
+  "entryPoint": {
+    "module": "mcpserver.agent_weather_time.agent_weather_time",
+    "class": "WeatherTimeAgent"
+  },
+  "factory": {
+    "create_instance": "create_weather_time_agent",
+    "validate_config": "validate_agent_config",
+    "get_dependencies": "get_agent_dependencies"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 15000
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "command": "weather",
+        "description": "查询天气信息，返回高德地图API原始数据。\n- `action`: weather/get_weather/current_weather\n- `city`: 城市名（可选，自动识别）\n- `query`: 查询内容（可选）\n**返回格式:**\n```json\n{\"status\": \"ok\", \"message\": \"API原始数据\", \"data\": {高德地图API原始JSON}}\n```\n**调用示例:**\n```json\n{\"action\": \"weather\", \"city\": \"北京\", \"query\": \"明天天气\"}```",
+        "example": "{\"action\": \"weather\", \"city\": \"北京\", \"query\": \"明天天气\"}"
+      },
+      {
+        "command": "time",
+        "description": "查询时间信息，返回高德地图API原始数据。\n- `action`: time/get_time/current_time\n- `city`: 城市名（可选，自动识别）\n**返回格式:**\n```json\n{\"status\": \"ok\", \"message\": \"API原始数据\", \"data\": {高德地图API原始JSON}}\n```\n**调用示例:**\n```json\n{\"action\": \"time\", \"city\": \"上海\"}```",
+        "example": "{\"action\": \"time\", \"city\": \"上海\"}"
+      }
+    ]
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "action": {"type": "string", "description": "操作类型：weather/get_weather/current_weather/time/get_time/current_time"},
+      "city": {"type": "string", "description": "城市名（可选，自动识别，支持中文城市名）"},
+      "ip": {"type": "string", "description": "用户IP（可选，自动获取）"},
+      "query": {"type": "string", "description": "查询内容（可选）"},
+      "format": {"type": "string", "description": "格式类型（可选）"}
+    },
+    "required": ["action"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "status": {"type": "string", "description": "状态：ok/error"},
+      "message": {"type": "string", "description": "消息描述"},
+      "data": {"type": "object", "description": "高德地图API原始JSON数据"}
+    }
+  },
+  "configSchema": {
+    "WEATHER_AGENT_DEFAULT_CITY": "string"
+  },
+  "runtime": {
+    "instance": null,
+    "is_initialized": false,
+    "last_used": null,
+    "usage_count": 0
+  }
+} 
