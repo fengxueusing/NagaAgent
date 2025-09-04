@@ -10,7 +10,7 @@ except Exception as e:
 
 class MemoryAgent(Agent):
     name = "MemoryAgent"
-    instructions = "知识图谱记忆MCP Agent，支持三元组回忆与查询"
+    instructions = "知识图谱记忆MCP Agent，支持五元组回忆与查询"
     def __init__(self):
         super().__init__(
             name=self.name,
@@ -21,7 +21,7 @@ class MemoryAgent(Agent):
 
     async def handle_handoff(self, data: dict) -> str:
         tool_name = data.get("tool_name")
-        if tool_name != "recall":
+        if tool_name != "回忆":
             return json.dumps({
                 "status": "error",
                 "message": f"未知操作: {tool_name}",
@@ -37,7 +37,7 @@ class MemoryAgent(Agent):
         if not memory_manager or not getattr(memory_manager, "enabled", False):
             return json.dumps({
                 "status": "error",
-                "message": "用户未启动三元组知识图谱，无法查询相关记忆",
+                "message": "用户未启动五元组知识图谱，无法查询相关记忆",
                 "data": ""
             }, ensure_ascii=False)
         try:

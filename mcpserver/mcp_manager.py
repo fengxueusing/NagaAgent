@@ -15,11 +15,11 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcpserver.mcp_registry import MCP_REGISTRY # MCP服务注册表
 
-from config import DEBUG, LOG_LEVEL
+from config import config, AI_NAME
 
 # 配置日志
 logging.basicConfig(
-    level=logging.DEBUG if DEBUG else getattr(logging, LOG_LEVEL),
+    level=logging.DEBUG if config.system.debug else getattr(logging, config.system.log_level.upper()),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("MCPManager")
@@ -373,7 +373,10 @@ class MCPManager:
                 elif hasattr(agent, tool_name):
                     method = getattr(agent, tool_name)
                     if callable(method):
-                        return await method(**args) if asyncio.iscoroutinefunction(method) else method(**args)
+                        # 过滤掉元数据字段，只保留实际参数
+                        filtered_args = {k: v for k, v in args.items() 
+                                       if k not in ['tool_name', 'service_name', 'agentType']}
+                        return await method(**filtered_args) if asyncio.iscoroutinefunction(method) else method(**filtered_args)
             
             # 最后尝试作为传统MCP服务调用
             return await self.call_service_tool(service_name, tool_name, args)

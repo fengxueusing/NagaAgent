@@ -1,0 +1,81 @@
+{
+  "name": "娜迦充值服务",
+  "displayName": "娜迦充值服务",
+  "version": "0.1.0",
+  "description": "娜迦API官网交互功能",
+  "author": "NagaAgent",
+  "agentType": "mcp",
+  "entryPoint": {
+    "module": "mcpserver.agent_naga_portal.naga_portal_agent",
+    "class": "NagaPortalAgent"
+  },
+  "factory": {
+    "create_instance": "create_naga_portal_agent",
+    "validate_config": "validate_agent_config",
+    "get_dependencies": "get_agent_dependencies"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 15000
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "command": "充值",
+        "description": "为账户充值；参数：amount（必填，充值金额）、payment_type（可选，支付方式，默认wxpay，支持wxpay/alipay）",
+        "example": "{\"tool_name\":\"充值\",\"amount\":\"11.00\",\"payment_type\":\"wxpay\"}"
+      },
+      {
+        "command": "兑换码",
+        "description": "使用兑换码充值；参数：key（必填，兑换码）",
+        "example": "{\"tool_name\":\"兑换码\",\"key\":\"aaaa\"}"
+      },
+      {
+        "command": "查询余额",
+        "description": "查询账户余额；无需参数",
+        "example": "{\"tool_name\":\"查询余额\"}"
+      },
+      {
+        "command": "申请令牌",
+        "description": "申请API令牌；参数：name（可选，令牌名称）、group（可选，模型组）、unlimited_quota（可选，是否无限制额度，默认true）。如果不提供参数，会返回可用模型列表供选择",
+        "example": "{\"tool_name\":\"申请令牌\"}"
+      },
+      {
+        "command": "查看令牌",
+        "description": "查看已配置的API令牌列表；无需参数",
+        "example": "{\"tool_name\":\"查看令牌\"}"
+      }
+    ]
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "tool_name": {"type": "string"},
+      "amount": {"type": "string"},
+      "payment_type": {"type": "string"},
+      "key": {"type": "string"},
+      "name": {"type": "string"},
+      "group": {"type": "string"},
+      "unlimited_quota": {"type": "boolean"}
+    },
+    "required": ["tool_name"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "success": {"type": "boolean"},
+      "status": {"type": "string"},
+      "message": {"type": "string"},
+      "data": {"type": "object"},
+      "error": {"type": "string"}
+    }
+  },
+  "runtime": {
+    "instance": null,
+    "is_initialized": false,
+    "last_used": null,
+    "usage_count": 0
+  }
+}
+
+

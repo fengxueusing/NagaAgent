@@ -2,7 +2,7 @@
 import json # 导入json模块
 import aiohttp # 异步HTTP请求
 from agents import Agent, ComputerTool # 导入Agent和工具基类
-from config import DEBUG # 导入全局DEBUG配置
+from config import config, AI_NAME # 导入配置
 import requests # 用于同步获取IP和城市
 import re # 用于正则解析
 from datetime import datetime, timedelta # 用于日期处理
@@ -18,10 +18,13 @@ class WeatherTimeTool:
         self._get_local_ip_and_city() # 初始化时获取本地IP和城市
         import asyncio
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
+            # 使用新的API检查事件循环状态 # 右侧注释
+            try:
+                loop = asyncio.get_running_loop()
+                # 有运行中的事件循环，创建异步任务
                 asyncio.create_task(self._preload_ip_info())
-            else:
+            except RuntimeError:
+                # 没有运行中的事件循环
                 self._ip_info = None # 不再异步获取IP
         except Exception:
             self._ip_info = None
@@ -53,7 +56,7 @@ class WeatherTimeTool:
         config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config.json')
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
-        api_key = config.get('weather_api_key')
+        api_key = config.get('weather').get('api_key')
         
         url = f'https://restapi.amap.com/v3/weather/weatherInfo?city={city}&key={api_key}&extensions=all'
         async with aiohttp.ClientSession() as session:
@@ -107,10 +110,18 @@ class WeatherTimeTool:
                         province = city_str
                         city_name = city_str
         
-        # 查表获取编码 # 右侧注释
-        city_code = CITY_CODE_MAP.get(city_name) or CITY_CODE_MAP.get(province)
+        # # 查表获取编码 # 右侧注释
+        # city_code = CITY_CODE_MAP.get(city_name) or CITY_CODE_MAP.get(province)
+        # if not city_code:
+        #     return {'status': 'error', 'message': f'未找到城市编码: {city_name}'}
+
+        # 先使用城市查询，失败则使用省份
+        city_code = await self._get_adcode_from_amap(city_name)
         if not city_code:
-            return {'status': 'error', 'message': f'未找到城市编码: {city_name}'}
+            city_code = await self._get_adcode_from_amap(province)
+
+        if not city_code:
+            return {'status': 'error', 'message': f'未找到城市编码或该城市不存在: {city_name}'}
         
         # 今日天气查询，只返回今日天气数据 # 右侧注释
         if action in ['today_weather', 'current_weather', 'today']:
@@ -210,6 +221,35 @@ class WeatherTimeTool:
             }
         else:
             return {'status': 'error', 'message': f'未知操作: {action}'}
+
+    async def _get_adcode_from_amap(self, keywords):
+        """
+        通过高德行政区域查询API，根据城市名获取adcode
+        :param keywords: 城市名称，如“北京”或“上海”
+        :return: 对应的adcode或None
+        """
+        import os
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config.json')
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        api_key = config.get('weather').get('api_key')
+
+        # 使用高德行政区域查询API的URL
+        url = f'https://restapi.amap.com/v3/config/district?keywords={keywords}&key={api_key}&subdistrict=0'
+
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(url, timeout=5) as resp:
+                    data = await resp.json(content_type=None)
+                    if data.get('status') == '1' and data.get('districts'):
+                        # 返回首个城市的adcode
+                        return data['districts'][0].get('adcode')
+                    else:
+                        return None
+            except Exception as e:
+                if config.system.debug:
+                    print(f"高德行政区域查询API调用失败: {e}")
+                return None
 
 class WeatherTimeAgent(Agent):
     """天气和时间Agent"""

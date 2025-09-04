@@ -8,7 +8,7 @@ import webbrowser
 
 from .quintuple_extractor import extract_quintuples
 from .quintuple_graph import store_quintuples
-from .quintuple_visualize import visualize_quintuples
+from .quintuple_visualize_v2 import visualize_quintuples
 from .quintuple_rag_query import query_knowledge, set_context
 
 # 添加上级目录以导入 config.py
@@ -186,8 +186,11 @@ def main(): # 主程序
             return
 
         if success:
-            webbrowser.open("graph.html")
-            print("\n知识图谱已生成：graph.html")
+            main_dir = os.path.dirname(os.path.abspath(__file__))
+            parent_dir = os.path.dirname(main_dir)
+            graph_path = os.path.join(parent_dir, "logs", "knowledge_graph", "graph.html")
+            webbrowser.open("file:///" + graph_path)
+            print("\n知识图谱已生成：logs/knowledge_graph/graph.html")
             print("请输入查询问题（输入空行退出）：")
             while True:
                 query = input("> ")

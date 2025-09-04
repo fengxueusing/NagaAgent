@@ -1,9 +1,9 @@
 {
-  "name": "AppLauncherAgent",
-  "displayName": "智能应用启动Agent",
-  "version": "1.0.0",
-  "description": "支持启动电脑应用：打开应用、列出应用、刷新应用列表。",
-  "author": "Naga应用操作模块",
+  "name": "应用启动服务",
+  "displayName": "应用启动服务",
+  "version": "2.2.0",
+  "description": "智能获取应用列表并启动指定应用",
+  "author": "NagaAgent",
   "agentType": "mcp",
   "entryPoint": {
     "module": "mcpserver.agent_open_launcher.agent_app_launcher",
@@ -21,30 +21,34 @@
   "capabilities": {
     "invocationCommands": [
       {
-        "command": "open",
-        "description": "启动指定应用。\n- `tool_name`: 固定为 `open`\n- `app`: 应用名称或路径\n- `args`: 启动参数（可选）\n**调用示例:**\n```json\n{\"tool_name\": \"open\", \"app\": \"notepad\"}```",
-        "example": "{\"tool_name\": \"open\", \"app\": \"notepad\"}"
+        "command": "获取应用列表",
+        "description": "获取系统中可用的应用列表，供用户选择要启动的应用",
+        "example": "{\"tool_name\":\"获取应用列表\"}"
       },
       {
-        "command": "list",
-        "description": "列出所有可用应用。\n- `tool_name`: 固定为 `list`\n**调用示例:**\n```json\n{\"tool_name\": \"list\"}```",
-        "example": "{\"tool_name\": \"list\"}"
-      },
-      {
-        "command": "refresh",
-        "description": "刷新应用列表缓存。\n- `tool_name`: 固定为 `refresh`\n**调用示例:**\n```json\n{\"tool_name\": \"refresh\"}```",
-        "example": "{\"tool_name\": \"refresh\"}"
+        "command": "启动应用",
+        "description": "启动指定的应用程序，需要提供应用名称",
+        "example": "{\"tool_name\":\"启动应用\",\"app\":\"Chrome\"}"
       }
     ]
   },
   "inputSchema": {
     "type": "object",
     "properties": {
-      "tool_name": {"type": "string", "description": "工具名称：open/list/refresh"},
-      "app": {"type": "string", "description": "应用名称或路径（open时必需）"},
-      "args": {"type": "string", "description": "启动参数（open时可选）"}
+      "tool_name": {"type": "string", "description": "工具名称：获取应用列表 或 启动应用"},
+      "app": {"type": "string", "description": "应用名称（仅在启动应用时必填）"},
+      "args": {"type": "string", "description": "启动参数（可选）"}
     },
     "required": ["tool_name"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "success": {"type": "boolean", "description": "操作是否成功"},
+      "status": {"type": "string", "description": "状态码"},
+      "message": {"type": "string", "description": "状态消息"},
+      "data": {"type": "object", "description": "返回数据"}
+    }
   },
   "configSchema": {
     "APP_LAUNCHER_AGENT_CACHE_SIZE": "integer"

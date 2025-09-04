@@ -15,11 +15,18 @@ logger = logging.getLogger("ToolCallUtils")
 def parse_tool_calls(content: str) -> list:
     """解析JSON格式工具调用，支持MCP和Agent两种类型"""
     tool_calls = []
-    pattern = r'｛([\s\S]*?)｝'
+    # 支持中英文括号的正则表达式
+    pattern = r'[｛{]([\s\S]*?)[｝}]'
     matches = re.finditer(pattern, content)
     for match in matches:
         try:
+            # 将中文括号替换为英文括号
             json_content = "{" + match.group(1).strip() + "}"
+            
+            # 处理尾随逗号问题
+            # 移除对象末尾的尾随逗号
+            json_content = re.sub(r',(\s*[}\]])', r'\1', json_content)
+            
             tool_args = json.loads(json_content)
             
             agent_type = tool_args.get('agentType', 'mcp').lower()
@@ -118,8 +125,8 @@ async def execute_tool_calls(tool_calls: list, mcp_manager) -> str:
             results.append(error_result)
     return "\n\n---\n\n".join(results)
 
-async def tool_call_loop(messages: List[Dict], mcp_manager, llm_caller, is_streaming: bool = False, max_recursion: int = None) -> Dict:
-    """工具调用循环主流程"""
+async def tool_call_loop(messages: List[Dict], mcp_manager, llm_caller, is_streaming: bool = False, max_recursion: int = None, tool_calls_queue=None) -> Dict:
+    """工具调用循环主流程 - 支持流式和非流式处理"""
     if max_recursion is None:
         # 默认配置
         max_recursion = 5 if is_streaming else 5
@@ -130,25 +137,60 @@ async def tool_call_loop(messages: List[Dict], mcp_manager, llm_caller, is_strea
     
     while recursion_depth < max_recursion:
         try:
-            resp = await llm_caller(current_messages)
-            current_ai_content = resp.get('content', '')
-            
-            print(f"[DEBUG] 第{recursion_depth + 1}轮LLM回复:")
-            print(f"[DEBUG] 回复内容: {current_ai_content}")
-            
-            tool_calls = parse_tool_calls(current_ai_content)
-            print(f"[DEBUG] 解析到工具调用数量: {len(tool_calls)}")
-            
-            if not tool_calls:
-                print(f"[DEBUG] 无工具调用，退出循环")
-                break
+            if is_streaming and tool_calls_queue:
+                # 流式模式：从队列中获取工具调用
+                tool_calls = []
+                while not tool_calls_queue.empty():
+                    try:
+                        tool_call = tool_calls_queue.get_nowait()
+                        tool_calls.append(tool_call)
+                    except:
+                        break
                 
+                if tool_calls:
+                    print(f"[DEBUG] 流式模式：从队列获取到 {len(tool_calls)} 个工具调用")
+                else:
+                    # 没有工具调用，退出循环
+                    print(f"[DEBUG] 流式模式：无工具调用，退出循环")
+                    break
+            else:
+                # 非流式模式：调用LLM获取完整内容
+                if hasattr(llm_caller, '__code__') and llm_caller.__code__.co_argcount > 1:
+                    resp = await llm_caller(current_messages, use_stream=is_streaming)
+                else:
+                    resp = await llm_caller(current_messages)
+                
+                current_ai_content = resp.get('content', '')
+                
+                print(f"[DEBUG] 第{recursion_depth + 1}轮LLM回复:")
+                print(f"[DEBUG] 回复内容: {current_ai_content}")
+                
+                tool_calls = parse_tool_calls(current_ai_content)
+                print(f"[DEBUG] 解析到工具调用数量: {len(tool_calls)}")
+                
+                if not tool_calls:
+                    print(f"[DEBUG] 无工具调用，退出循环")
+                    break
+            
+            # 执行工具调用
             for i, tool_call in enumerate(tool_calls):
                 print(f"[DEBUG] 工具调用{i+1}: {tool_call}")
             
             tool_results = await execute_tool_calls(tool_calls, mcp_manager)
-            current_messages.append({'role': 'assistant', 'content': current_ai_content})
-            current_messages.append({'role': 'user', 'content': tool_results})
+            
+            # 工具调用执行完成，将结果传递给LLM继续处理
+            if not is_streaming:
+                # 非流式模式：添加到消息历史
+                current_messages.append({'role': 'assistant', 'content': current_ai_content})
+                current_messages.append({'role': 'user', 'content': tool_results})
+            else:
+                # 流式模式：返回工具结果，让上层处理
+                return {
+                    'content': tool_results,
+                    'recursion_depth': recursion_depth,
+                    'messages': current_messages,
+                    'has_tool_results': True
+                }
             recursion_depth += 1
         except Exception as e:
             print(f"工具调用循环错误: {e}")
@@ -157,5 +199,6 @@ async def tool_call_loop(messages: List[Dict], mcp_manager, llm_caller, is_strea
     return {
         'content': current_ai_content,
         'recursion_depth': recursion_depth,
-        'messages': current_messages
+        'messages': current_messages,
+        'has_tool_results': False
     } 

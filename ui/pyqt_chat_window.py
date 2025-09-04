@@ -1,19 +1,26 @@
 import sys, os; sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + '/..'))
+from .styles.button_factory import ButtonFactory
 import sys, datetime
-from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QSizePolicy, QGraphicsBlurEffect, QHBoxLayout, QLabel, QVBoxLayout, QStackedLayout, QPushButton, QStackedWidget, QDesktopWidget, QScrollArea, QSplitter, QGraphicsDropShadowEffect
+from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QSizePolicy, QGraphicsBlurEffect, QHBoxLayout, QLabel, QVBoxLayout, QStackedLayout, QPushButton, QStackedWidget, QDesktopWidget, QScrollArea, QSplitter, QGraphicsDropShadowEffect, QFileDialog, QMessageBox, QFrame
 from PyQt5.QtCore import Qt, QRect, QThread, pyqtSignal, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QTimer
-from PyQt5.QtGui import QColor, QPainter, QBrush, QFont, QPixmap, QPalette, QPen
+from PyQt5.QtGui import QColor, QPainter, QBrush, QFont, QPixmap, QPalette, QPen, QIcon
 from conversation_core import NagaConversation
 import os
-from config import config # 导入统一配置
+from config import config, AI_NAME # 导入统一配置
 from ui.response_utils import extract_message  # 新增：引入消息提取工具
-from ui.progress_widget import EnhancedProgressWidget  # 导入进度组件
+from ui.styles.progress_widget import EnhancedProgressWidget  # 导入进度组件
 from ui.enhanced_worker import StreamingWorker, BatchWorker  # 导入增强Worker
 from ui.elegant_settings_widget import ElegantSettingsWidget
+from ui.message_renderer import MessageRenderer  # 导入消息渲染器
 import asyncio
 import json
 import threading
 from PyQt5.QtCore import QObject, pyqtSignal as Signal
+import requests
+import shutil
+from pathlib import Path
+import time
+import os
 
 # 使用统一配置系统
 BG_ALPHA = config.ui.bg_alpha
@@ -23,6 +30,8 @@ MAC_BTN_SIZE = config.ui.mac_btn_size
 MAC_BTN_MARGIN = config.ui.mac_btn_margin
 MAC_BTN_GAP = config.ui.mac_btn_gap
 ANIMATION_DURATION = config.ui.animation_duration
+
+
 
 class TitleBar(QWidget):
     def __init__(s, text, parent=None):
@@ -204,19 +213,63 @@ class ChatWindow(QWidget):
                 border: none;
             }
         """) # 保证背景穿透
-        s.text = QTextEdit() # 聊天历史
-        s.text.setReadOnly(True)
-        s.text.setStyleSheet(f"""
-            QTextEdit {{
-                background: rgba(17,17,17,{int(BG_ALPHA*255)});
-                color: #fff;
-                border-radius: 15px;
-                border: 1px solid rgba(255, 255, 255, 50);
-                font: 16pt 'Lucida Console';
-                padding: 10px;
-            }}
+        
+        # 创建聊天页面容器
+        s.chat_page = QWidget()
+        s.chat_page.setStyleSheet("""
+            QWidget {
+                background: transparent;
+                border: none;
+            }
         """)
-        s.chat_stack.addWidget(s.text) # index 0 聊天页
+        
+        # 创建滚动区域来容纳消息对话框
+        s.chat_scroll_area = QScrollArea(s.chat_page)
+        s.chat_scroll_area.setWidgetResizable(True)
+        s.chat_scroll_area.setStyleSheet("""
+            QScrollArea {
+                background: transparent;
+                border: none;
+                outline: none;
+            }
+            QScrollBar:vertical {
+                background: rgba(255, 255, 255, 30);
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 80);
+                border-radius: 4px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255, 255, 255, 120);
+            }
+        """)
+        
+        # 创建滚动内容容器
+        s.chat_content = QWidget()
+        s.chat_content.setStyleSheet("""
+            QWidget {
+                background: transparent;
+                border: none;
+            }
+        """)
+        
+        # 创建垂直布局来排列消息对话框
+        s.chat_layout = QVBoxLayout(s.chat_content)
+        s.chat_layout.setContentsMargins(10, 10, 10, 10)
+        s.chat_layout.setSpacing(10)
+        s.chat_layout.addStretch()  # 添加弹性空间，让消息从顶部开始
+        
+        s.chat_scroll_area.setWidget(s.chat_content)
+        
+        # 创建聊天页面布局
+        chat_page_layout = QVBoxLayout(s.chat_page)
+        chat_page_layout.setContentsMargins(0, 0, 0, 0)
+        chat_page_layout.addWidget(s.chat_scroll_area)
+        
+        s.chat_stack.addWidget(s.chat_page) # index 0 聊天页
         s.settings_page = s.create_settings_page() # index 1 设置页
         s.chat_stack.addWidget(s.settings_page)
         vlay.addWidget(s.chat_stack, 1)
@@ -226,7 +279,7 @@ class ChatWindow(QWidget):
         vlay.addWidget(s.progress_widget)
         
         s.input_wrap=QWidget(chat_area)
-        s.input_wrap.setFixedHeight(48)
+        s.input_wrap.setFixedHeight(60)  # 增加输入框包装器的高度，与字体大小匹配
         hlay=QHBoxLayout(s.input_wrap);hlay.setContentsMargins(0,0,0,0);hlay.setSpacing(8)
         s.prompt=QLabel('>',s.input_wrap)
         s.prompt.setStyleSheet(f"color:#fff;font:{fontsize}pt '{fontfam}';background:transparent;")
@@ -245,6 +298,15 @@ class ChatWindow(QWidget):
         s.input.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         s.input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         hlay.addWidget(s.input)
+        
+        # 添加文档上传按钮
+        s.upload_btn = ButtonFactory.create_action_button("upload", s.input_wrap)
+        hlay.addWidget(s.upload_btn)
+        
+        # 添加心智云图按钮
+        s.mind_map_btn = ButtonFactory.create_action_button("mind_map", s.input_wrap)
+        hlay.addWidget(s.mind_map_btn)
+        
         vlay.addWidget(s.input_wrap,0)
         
         # 将聊天区域添加到分割器
@@ -252,8 +314,10 @@ class ChatWindow(QWidget):
         
         # 侧栏（图片显示区域）- 使用自定义动画Widget
         s.side = AnimatedSideWidget()
-        s.side.setMinimumWidth(300)  # 设置最小宽度
-        s.side.setMaximumWidth(800)  # 设置最大宽度
+        s.collapsed_width = 400  # 收缩状态宽度
+        s.expanded_width = 800  # 展开状态宽度
+        s.side.setMinimumWidth(s.collapsed_width)  # 设置最小宽度为收缩状态
+        s.side.setMaximumWidth(s.collapsed_width)  # 初始状态为收缩
         
         # 优化侧栏的悬停效果，使用QPainter绘制
         def setup_side_hover_effects():
@@ -280,7 +344,7 @@ class ChatWindow(QWidget):
         s.img.setMaximumSize(16777215,16777215)
         s.img.setStyleSheet('background:transparent; border: none;')
         stack.addWidget(s.img)
-        nick=QLabel(f"● 娜迦{config.system.version}",s.side)
+        nick=QLabel(f"● {AI_NAME}{config.system.version}",s.side)
         nick.setStyleSheet("""
             QLabel {
                 color: #fff;
@@ -293,13 +357,14 @@ class ChatWindow(QWidget):
         """)
         nick.setAlignment(Qt.AlignHCenter|Qt.AlignTop)
         nick.setAttribute(Qt.WA_TransparentForMouseEvents)
+        nick.hide()  # 隐藏昵称
         stack.addWidget(nick)
         
         # 将侧栏添加到分割器
         s.main_splitter.addWidget(s.side)
         
-        # 设置分割器的初始比例
-        s.main_splitter.setSizes([window_width * 2 // 3, window_width // 3])  # 2:1的比例
+        # 设置分割器的初始比例 - 侧栏收缩状态
+        s.main_splitter.setSizes([window_width - s.collapsed_width - 20, s.collapsed_width])  # 大部分给聊天区域
         
         # 创建包含分割器的主布局
         main=QVBoxLayout(s)
@@ -309,8 +374,8 @@ class ChatWindow(QWidget):
         s.nick=nick
         s.naga=NagaConversation()  # 第三次初始化：ChatWindow构造函数中创建
         s.worker=None
-        s.full_img=0 # 立绘展开标志
-        s.streaming_mode = True  # 默认启用流式模式
+        s.full_img=0 # 立绘展开标志，0=收缩状态，1=展开状态
+        s.streaming_mode = config.system.stream_mode  # 根据配置决定是否使用流式模式
         s.current_response = ""  # 当前响应缓冲
         s.animating = False  # 动画标志位，动画期间为True
         s._img_inited = False  # 标志变量，图片自适应只在初始化时触发一次
@@ -320,6 +385,13 @@ class ChatWindow(QWidget):
         
         s.input.textChanged.connect(s.adjust_input_height)
         s.input.installEventFilter(s)
+        
+        # 连接文档上传按钮
+        s.upload_btn.clicked.connect(s.upload_document)
+        
+        # 连接心智云图按钮
+        s.mind_map_btn.clicked.connect(s.open_mind_map)
+        
         s.setLayout(main)
         s.titlebar = TitleBar('NAGA AGENT', s)
         s.titlebar.setGeometry(0,0,s.width(),100)
@@ -386,21 +458,32 @@ class ChatWindow(QWidget):
         return page
 
     def resizeEvent(s, e):
-        if getattr(s, '_animating', False):  # 动画期间跳过自适应刷新，提升动画流畅度
+        if getattr(s, '_animating', False):  # 动画期间跳过所有重绘操作，避免卡顿
             return
-        if hasattr(s,'img') and hasattr(s,'nick'):
+        if hasattr(s,'img'):
             s.img.resize(s.img.parent().width(), s.img.parent().height())
-            s.nick.resize(s.img.width(), 48) # 48为昵称高度，可自调
-            s.nick.move(0,0)
-            p=os.path.join(os.path.dirname(__file__),'standby.png')
-            q=QPixmap(p)
+            # 延迟图片缩放操作，避免频繁重绘
+            if not hasattr(s, '_resize_timer'):
+                s._resize_timer = QTimer()
+                s._resize_timer.setSingleShot(True)
+                s._resize_timer.timeout.connect(s._delayed_image_resize)
+            s._resize_timer.start(50)  # 50ms后执行图片缩放
+            
+    def _delayed_image_resize(s):
+        """延迟执行的图片缩放，避免频繁重绘"""
+        if hasattr(s, 'img') and not getattr(s, '_animating', False):
+            p = os.path.join(os.path.dirname(__file__), 'standby.png')
+            q = QPixmap(p)
             if os.path.exists(p) and not q.isNull():
-                s.img.setPixmap(q.scaled(s.img.width(),s.img.height(),Qt.KeepAspectRatioByExpanding,Qt.SmoothTransformation))
+                # 确保图片完全填满侧栏，无空隙
+                parent_width = s.img.parent().width()
+                parent_height = s.img.parent().height()
+                s.img.setPixmap(q.scaled(parent_width, parent_height, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
 
     def adjust_input_height(s):
         doc = s.input.document()
         h = int(doc.size().height())+10
-        s.input.setFixedHeight(min(max(48, h), 120))
+        s.input.setFixedHeight(min(max(60, h), 150))  # 增加最小高度，与字体大小匹配
         s.input_wrap.setFixedHeight(s.input.height())
         
     def eventFilter(s, obj, event):
@@ -409,12 +492,90 @@ class ChatWindow(QWidget):
                 s.on_send();return True
         return False
     def add_user_message(s, name, content):
-        # 先把\n转成\n，再把\n转成<br>，适配所有换行
+        """添加用户消息"""
         from ui.response_utils import extract_message
         msg = extract_message(content)
         content_html = str(msg).replace('\\n', '\n').replace('\n', '<br>')
-        s.text.append(f"<span style='color:#fff;font-size:12pt;font-family:Lucida Console;'>{name}</span>")
-        s.text.append(f"<span style='color:#fff;font-size:16pt;font-family:Lucida Console;'>{content_html}</span>")
+        
+        # 生成消息ID
+        if not hasattr(s, '_message_counter'):
+            s._message_counter = 0
+        s._message_counter += 1
+        message_id = f"msg_{s._message_counter}"
+        
+        # 初始化消息存储
+        if not hasattr(s, '_messages'):
+            s._messages = {}
+        
+        # 存储消息信息
+        s._messages[message_id] = {
+            'name': name,
+            'content': content_html,
+            'full_content': content,
+            'dialog_widget': None
+        }
+        
+        # 使用消息渲染器创建对话框
+        if name == "系统":
+            message_dialog = MessageRenderer.create_system_message(name, content_html, s.chat_content)
+        else:
+            message_dialog = MessageRenderer.create_user_message(name, content_html, s.chat_content)
+        
+        # 存储对话框引用
+        s._messages[message_id]['dialog_widget'] = message_dialog
+        
+        # 在弹性空间之前插入新的消息对话框
+        stretch_index = s.chat_layout.count() - 1
+        s.chat_layout.insertWidget(stretch_index, message_dialog)
+        
+        # 滚动到底部
+        s.scroll_to_bottom()
+        
+        return message_id
+    
+    def update_last_message(s, name, content):
+        """更新最后一条消息的内容"""
+        from ui.response_utils import extract_message
+        msg = extract_message(content)
+        content_html = str(msg).replace('\\n', '\n').replace('\n', '<br>')
+        
+        # 检查是否有当前消息ID
+        if hasattr(s, '_current_message_id') and s._current_message_id:
+            # 更新存储的消息信息
+            if hasattr(s, '_messages') and s._current_message_id in s._messages:
+                s._messages[s._current_message_id]['content'] = content_html
+                s._messages[s._current_message_id]['full_content'] = content
+                
+                # 使用消息渲染器更新对话框内容
+                dialog_widget = s._messages[s._current_message_id]['dialog_widget']
+                if dialog_widget:
+                    MessageRenderer.update_message_content(dialog_widget, content_html)
+        else:
+            # 如果没有当前消息ID，直接添加新消息
+            s.add_user_message(name, content)
+    
+    def scroll_to_bottom(s):
+        """滚动到聊天区域底部"""
+        # 使用QTimer延迟滚动，确保布局完成
+        QTimer.singleShot(10, lambda: s.chat_scroll_area.verticalScrollBar().setValue(
+            s.chat_scroll_area.verticalScrollBar().maximum()
+        ))
+        
+    def clear_chat_history(s):
+        """清除聊天历史记录"""
+        # 清除所有消息对话框
+        if hasattr(s, '_messages'):
+            for message_id, message_info in s._messages.items():
+                dialog_widget = message_info.get('dialog_widget')
+                if dialog_widget:
+                    dialog_widget.deleteLater()
+            s._messages.clear()
+        
+        # 清除布局中的所有widget（除了弹性空间）
+        while s.chat_layout.count() > 1:  # 保留最后的弹性空间
+            item = s.chat_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
     def on_send(s):
         u = s.input.toPlainText().strip()
         if u:
@@ -458,6 +619,10 @@ class ChatWindow(QWidget):
         s.worker.stream_chunk.connect(s.append_response_chunk)
         s.worker.stream_complete.connect(s.finalize_streaming_response)
         s.worker.finished.connect(s.on_response_finished)
+        
+        # 工具调用相关信号
+        s.worker.tool_call_detected.connect(s.handle_tool_call)
+        s.worker.tool_result_received.connect(s.handle_tool_result)
     
     def setup_batch_worker(s):
         """配置批量Worker的信号连接"""
@@ -467,18 +632,35 @@ class ChatWindow(QWidget):
         s.worker.finished.connect(s.on_batch_response_finished)
     
     def append_response_chunk(s, chunk):
-        """追加响应片段（流式模式）"""
-        s.current_response += chunk
-        # 实时更新显示（可选，避免过于频繁的更新）
-        # s.update_last_message("娜迦", s.current_response)
+        """追加响应片段（流式模式）- 实时显示"""
+        # 实时更新显示 - 立即显示到UI
+        if not hasattr(s, '_current_message_id'):
+            # 第一次收到chunk时，创建新消息
+            s._current_message_id = s.add_user_message(AI_NAME, chunk)
+            s.current_response = chunk
+        else:
+            # 后续chunk，追加到当前消息
+            s.current_response += chunk
+            s.update_last_message(AI_NAME, s.current_response)
+            
+        # 强制UI更新
+        s.chat_scroll_area.viewport().update()
     
     def finalize_streaming_response(s):
-        """完成流式响应"""
+        """完成流式响应 - 立即处理"""
         if s.current_response:
             # 对累积的完整响应进行消息提取（多步自动\n分隔）
             from ui.response_utils import extract_message
             final_message = extract_message(s.current_response)
-            s.add_user_message("娜迦", final_message)
+            
+            # 更新最终消息
+            if hasattr(s, '_current_message_id'):
+                s.update_last_message(AI_NAME, final_message)
+                delattr(s, '_current_message_id')
+            else:
+                s.add_user_message(AI_NAME, final_message)
+        
+        # 立即停止加载状态
         s.progress_widget.stop_loading()
     
     def on_response_finished(s, response):
@@ -489,7 +671,7 @@ class ChatWindow(QWidget):
         if not s.current_response:  # 如果流式没有收到数据，使用最终结果
             from ui.response_utils import extract_message
             final_message = extract_message(response)
-            s.add_user_message("娜迦", final_message)
+            s.add_user_message(AI_NAME, final_message)
         s.progress_widget.stop_loading()
     
     def on_batch_response_finished(s, response):
@@ -499,13 +681,83 @@ class ChatWindow(QWidget):
             return  # 不显示，因为已经在cancel_current_task中显示了
         from ui.response_utils import extract_message
         final_message = extract_message(response)
-        s.add_user_message("娜迦", final_message)
+        s.add_user_message(AI_NAME, final_message)
         s.progress_widget.stop_loading()
     
     def handle_error(s, error_msg):
         """处理错误"""
         s.add_user_message("系统", f"❌ {error_msg}")
         s.progress_widget.stop_loading()
+    
+    def handle_tool_call(s, notification):
+        """处理工具调用通知"""
+        # 创建专门的工具调用内容对话框（没有用户名）
+        tool_call_dialog = MessageRenderer.create_tool_call_content_message(notification, s.chat_content)
+        
+        # 设置嵌套对话框内容
+        nested_title = "工具调用详情"
+        nested_content = f"""
+工具名称: {notification}
+状态: 正在执行...
+时间: {time.strftime('%H:%M:%S')}
+        """.strip()
+        tool_call_dialog.set_nested_content(nested_title, nested_content)
+        
+        # 生成消息ID
+        if not hasattr(s, '_message_counter'):
+            s._message_counter = 0
+        s._message_counter += 1
+        message_id = f"tool_call_{s._message_counter}"
+        
+        # 初始化消息存储
+        if not hasattr(s, '_messages'):
+            s._messages = {}
+        
+        # 存储工具调用消息信息
+        s._messages[message_id] = {
+            'name': '工具调用',
+            'content': notification,
+            'full_content': notification,
+            'dialog_widget': tool_call_dialog
+        }
+        
+        # 在弹性空间之前插入工具调用对话框
+        stretch_index = s.chat_layout.count() - 1
+        s.chat_layout.insertWidget(stretch_index, tool_call_dialog)
+        
+        # 滚动到底部
+        s.scroll_to_bottom()
+        
+        # 在状态栏也显示工具调用状态
+        s.progress_widget.status_label.setText(f"🔧 {notification}")
+        print(f"工具调用: {notification}")
+    
+    def handle_tool_result(s, result):
+        """处理工具执行结果"""
+        # 查找最近的工具调用对话框并更新
+        if hasattr(s, '_messages'):
+            for message_id, message_info in reversed(list(s._messages.items())):
+                if message_id.startswith('tool_call_'):
+                    dialog_widget = message_info.get('dialog_widget')
+                    if dialog_widget:
+                        # 更新工具调用对话框显示结果
+                        MessageRenderer.update_message_content(dialog_widget, f"✅ {result}")
+                        
+                        # 更新嵌套对话框内容
+                        if hasattr(dialog_widget, 'set_nested_content'):
+                            nested_title = "工具调用结果"
+                            nested_content = f"""
+工具名称: {message_info.get('content', '未知工具')}
+状态: 执行完成 ✅
+时间: {time.strftime('%H:%M:%S')}
+结果: {result[:200]}{'...' if len(result) > 200 else ''}
+                            """.strip()
+                            dialog_widget.set_nested_content(nested_title, nested_content)
+                        break
+        
+        # 在状态栏也显示工具执行结果
+        s.progress_widget.status_label.setText(f"✅ {result[:50]}...")
+        print(f"工具结果: {result}")
     
     def cancel_current_task(s):
         """取消当前任务 - 优化版本，减少卡顿"""
@@ -540,106 +792,117 @@ class ChatWindow(QWidget):
             return
         s._animating = True  # 设置动画标志位
         s.full_img^=1  # 立绘展开标志切换
-        target_width = 800 if s.full_img else 400  # 目标宽度
+        target_width = s.expanded_width if s.full_img else s.collapsed_width  # 目标宽度：展开或收缩
+        
         # --- 立即切换界面状态 ---
-        if s.full_img:
-            s.input_wrap.hide()  # 立即隐藏输入框
-            s.chat_stack.setCurrentIndex(1)  # 立即切换到设置页
-            s.side.setCursor(Qt.ArrowCursor)  # 放大模式下恢复普通指针
+        if s.full_img:  # 展开状态 - 进入设置页面
+            s.input_wrap.hide()  # 隐藏输入框
+            s.chat_stack.setCurrentIndex(1)  # 切换到设置页
+            s.side.setCursor(Qt.PointingHandCursor)  # 保持点击指针，可点击收缩
             s.titlebar.text = "SETTING PAGE"
             s.titlebar.update()
-            s.side.setStyleSheet("""
-                QWidget {
-                    background: rgba(17,17,17,150);
+            s.side.setStyleSheet(f"""
+                QWidget {{
+                    background: rgba(17,17,17,{int(BG_ALPHA*255*0.9)});
                     border-radius: 15px;
                     border: 1px solid rgba(255, 255, 255, 80);
-                }
+                }}
             """)
-            s.side.enterEvent = s.side.leaveEvent = lambda e: None
-        else:
-            s.input_wrap.show()  # 立即显示输入框
-            s.chat_stack.setCurrentIndex(0)  # 立即切换到聊天页
+        else:  # 收缩状态 - 主界面聊天模式
+            s.input_wrap.show()  # 显示输入框
+            s.chat_stack.setCurrentIndex(0)  # 切换到聊天页
             s.input.setFocus()  # 恢复输入焦点
-            s.side.setCursor(Qt.PointingHandCursor)  # 恢复点击指针
+            s.side.setCursor(Qt.PointingHandCursor)  # 保持点击指针
             s.titlebar.text = "NAGA AGENT"
             s.titlebar.update()
             s.side.setStyleSheet(f"""
                 QWidget {{
-                    background: rgba(17,17,17,{int(BG_ALPHA*255)}}});
+                    background: rgba(17,17,17,{int(BG_ALPHA*255*0.7)});
                     border-radius: 15px;
-                    border: 1px solid rgba(255, 255, 255, 50);
+                    border: 1px solid rgba(255, 255, 255, 40);
                 }}
             """)
-            s.side.enterEvent = s.side_hover_enter
-            s.side.leaveEvent = s.side_hover_leave
         # --- 立即切换界面状态 END ---
+        
+        # 创建优化后的动画组
         group = QParallelAnimationGroup(s)
+        
+        # 侧栏宽度动画 - 合并为单个动画
         side_anim = QPropertyAnimation(s.side, b"minimumWidth", s)
         side_anim.setDuration(ANIMATION_DURATION)
         side_anim.setStartValue(s.side.width())
         side_anim.setEndValue(target_width)
-        side_anim.setEasingCurve(QEasingCurve.OutExpo)
+        side_anim.setEasingCurve(QEasingCurve.OutCubic)  # 使用更流畅的缓动
         group.addAnimation(side_anim)
+        
         side_anim2 = QPropertyAnimation(s.side, b"maximumWidth", s)
         side_anim2.setDuration(ANIMATION_DURATION)
         side_anim2.setStartValue(s.side.width())
         side_anim2.setEndValue(target_width)
-        side_anim2.setEasingCurve(QEasingCurve.OutExpo)
+        side_anim2.setEasingCurve(QEasingCurve.OutCubic)
         group.addAnimation(side_anim2)
-        chat_area = s.side.parent().findChild(QWidget)
-        if hasattr(s, 'chat_area'):
-            chat_area = s.chat_area
+        
+        # 输入框动画 - 进入设置时隐藏，退出时显示
+        if s.full_img:
+            input_hide_anim = QPropertyAnimation(s.input_wrap, b"maximumHeight", s)
+            input_hide_anim.setDuration(ANIMATION_DURATION // 2)
+            input_hide_anim.setStartValue(s.input_wrap.height())
+            input_hide_anim.setEndValue(0)
+            input_hide_anim.setEasingCurve(QEasingCurve.OutQuad)
+            group.addAnimation(input_hide_anim)
         else:
-            chat_area = s.side.parent().children()[1]
-        chat_target_width = s.width() - target_width - 30  # 基于实际窗口宽度计算
-        chat_anim = QPropertyAnimation(chat_area, b"minimumWidth", s)
-        chat_anim.setDuration(ANIMATION_DURATION)
-        chat_anim.setStartValue(chat_area.width())
-        chat_anim.setEndValue(chat_target_width)
-        chat_anim.setEasingCurve(QEasingCurve.OutExpo)
-        group.addAnimation(chat_anim)
-        chat_anim2 = QPropertyAnimation(chat_area, b"maximumWidth", s)
-        chat_anim2.setDuration(ANIMATION_DURATION)
-        chat_anim2.setStartValue(chat_area.width())
-        chat_anim2.setEndValue(chat_target_width)
-        chat_anim2.setEasingCurve(QEasingCurve.OutExpo)
-        group.addAnimation(chat_anim2)
-        input_hide_anim = QPropertyAnimation(s.input_wrap, b"maximumHeight", s)
-        input_hide_anim.setDuration(ANIMATION_DURATION // 3)
-        input_hide_anim.setStartValue(s.input_wrap.height())
-        input_hide_anim.setEndValue(0 if s.full_img else 48)
-        input_hide_anim.setEasingCurve(QEasingCurve.InOutQuart)
-        group.addAnimation(input_hide_anim)
-        input_opacity_anim = QPropertyAnimation(s.input, b"windowOpacity", s)
-        input_opacity_anim.setDuration(ANIMATION_DURATION // 4)
-        input_opacity_anim.setStartValue(1.0)
-        input_opacity_anim.setEndValue(0.0 if s.full_img else 1.0)
-        input_opacity_anim.setEasingCurve(QEasingCurve.InOutQuart)
-        group.addAnimation(input_opacity_anim)
-        p = os.path.join(os.path.dirname(__file__), 'standby.png')
-        if os.path.exists(p):
-            pixmap = QPixmap(p)
-            if not pixmap.isNull():
-                img_scale_anim = QPropertyAnimation(s.img, b"geometry", s)
-                img_scale_anim.setDuration(ANIMATION_DURATION)
-                current_rect = s.img.geometry()
-                target_rect = QRect(0, 0, target_width, s.side.height())
-                img_scale_anim.setStartValue(current_rect)
-                img_scale_anim.setEndValue(target_rect)
-                img_scale_anim.setEasingCurve(QEasingCurve.OutExpo)
-                group.addAnimation(img_scale_anim)
-        def on_animation_finished():
+            input_show_anim = QPropertyAnimation(s.input_wrap, b"maximumHeight", s)
+            input_show_anim.setDuration(ANIMATION_DURATION // 2)
+            input_show_anim.setStartValue(0)
+            input_show_anim.setEndValue(60)
+            input_show_anim.setEasingCurve(QEasingCurve.OutQuad)
+            group.addAnimation(input_show_anim)
+        
+        # 预加载原始图片，避免重复加载
+        if not hasattr(s, '_original_pixmap'):
             p = os.path.join(os.path.dirname(__file__), 'standby.png')
             if os.path.exists(p):
-                q = QPixmap(p)
-                if not q.isNull():
-                    s.img.setPixmap(q.scaled(target_width, s.side.height(), 
-                                           Qt.KeepAspectRatio if s.full_img else Qt.KeepAspectRatioByExpanding, 
-                                           Qt.SmoothTransformation))  # 动画结束后再缩放图片，提升流畅度
-            s._animating = False  # 动画结束，允许自适应
-            s.resizeEvent(None)  # 动画结束后手动刷新一次，保证布局和图片同步
+                s._original_pixmap = QPixmap(p)
+        
+        def on_side_width_changed():
+            """侧栏宽度变化时实时更新图片"""
+            if hasattr(s, '_original_pixmap') and not s._original_pixmap.isNull():
+                current_width = s.side.width() - 10  # 减去margin
+                current_height = s.side.height() - 10
+                
+                if current_width > 50 and current_height > 50:  # 避免过小尺寸
+                    # 实时缩放并设置图片
+                    scaled_pixmap = s._original_pixmap.scaled(
+                        current_width, current_height, 
+                        Qt.KeepAspectRatioByExpanding, 
+                        Qt.FastTransformation  # 使用快速变换，提高性能
+                    )
+                    s.img.setPixmap(scaled_pixmap)
+                    s.img.resize(current_width, current_height)
+                    
+                    # 昵称始终隐藏
+        
+        def on_animation_finished():
+            s._animating = False  # 动画结束标志
+            # 最终使用高质量变换
+            if hasattr(s, '_original_pixmap') and not s._original_pixmap.isNull():
+                actual_width = target_width - 10
+                actual_height = s.side.height() - 10
+                final_pixmap = s._original_pixmap.scaled(
+                    actual_width, actual_height,
+                    Qt.KeepAspectRatioByExpanding,
+                    Qt.SmoothTransformation  # 最终使用高质量变换
+                )
+                s.img.setPixmap(final_pixmap)
+                s.img.resize(actual_width, actual_height)
+                
+                # 昵称始终隐藏
+        
+        # 连接信号
+        side_anim.valueChanged.connect(on_side_width_changed)
         group.finished.connect(on_animation_finished)
         group.start()
+        
 
     # 添加整个窗口的拖动支持
     def mousePressEvent(s, event):
@@ -671,17 +934,15 @@ class ChatWindow(QWidget):
         print(f"设置变化: {setting_key} = {value}")
         
         # 这里可以实时应用某些设置变化
-        if setting_key == "STREAM_MODE":
-            s.streaming_mode = value
-            s.add_user_message("系统", f"● 流式模式已{'启用' if value else '禁用'}")
-        elif setting_key == "BG_ALPHA":
-            # 实时更新背景透明度
-            global BG_ALPHA
-            BG_ALPHA = value / 100.0
-            # 这里可以添加实时更新UI的代码
-        elif setting_key == "VOICE_ENABLED":
+        if setting_key in ("all", "ui.bg_alpha", "ui.window_bg_alpha"):  # UI透明度变化 #
+            s.apply_opacity_from_config()  # 立即应用 #
+            return
+        if setting_key in ("system.stream_mode", "STREAM_MODE"):
+            s.streaming_mode = value if setting_key == "system.stream_mode" else value  # 兼容新旧键名 #
+            s.add_user_message("系统", f"● 流式模式已{'启用' if s.streaming_mode else '禁用'}")
+        elif setting_key in ("system.voice_enabled", "VOICE_ENABLED"):
             s.add_user_message("系统", f"● 语音功能已{'启用' if value else '禁用'}")
-        elif setting_key == "DEBUG":
+        elif setting_key in ("system.debug", "DEBUG"):
             s.add_user_message("系统", f"● 调试模式已{'启用' if value else '禁用'}")
         
         # 发送设置变化信号给其他组件
@@ -721,6 +982,47 @@ class ChatWindow(QWidget):
         
         print(f"✅ 窗口背景透明度已设置为: {WINDOW_BG_ALPHA}/255 ({WINDOW_BG_ALPHA/255*100:.1f}%不透明度)")
 
+    def apply_opacity_from_config(s):
+        """从配置中应用UI透明度(聊天区/输入框/侧栏/窗口)"""
+        # 更新全局变量，保持其它逻辑一致 #
+        global BG_ALPHA, WINDOW_BG_ALPHA
+        BG_ALPHA = config.ui.bg_alpha
+        WINDOW_BG_ALPHA = config.ui.window_bg_alpha if isinstance(config.ui.window_bg_alpha, int) else int(config.ui.window_bg_alpha * 255)
+
+        # 计算alpha #
+        alpha_px = int(BG_ALPHA * 255)
+
+        # 更新聊天区域背景 - 现在使用透明背景，对话框有自己的背景
+        s.chat_content.setStyleSheet(f"""
+            QWidget {{
+                background: transparent;
+                border: none;
+            }}
+        """)
+
+        # 更新输入框背景 #
+        fontfam, fontsize = 'Lucida Console', 16
+        s.input.setStyleSheet(f"""
+            QTextEdit {{
+                background: rgba(17,17,17,{alpha_px});
+                color: #fff;
+                border-radius: 15px;
+                border: 1px solid rgba(255, 255, 255, 50);
+                font: {fontsize}pt '{fontfam}';
+                padding: 8px;
+            }}
+        """)
+
+        # 更新侧栏背景 #
+        if hasattr(s, 'side') and isinstance(s.side, QWidget):
+            try:
+                s.side.set_background_alpha(alpha_px)
+            except Exception:
+                pass
+
+        # 更新主窗口背景 #
+        s.set_window_background_alpha(WINDOW_BG_ALPHA)
+
     def showEvent(s, event):
         """窗口显示事件"""
         super().showEvent(event)
@@ -728,14 +1030,243 @@ class ChatWindow(QWidget):
         # 其他初始化代码...
         s.setFocus()
         s.input.setFocus()
-        if not getattr(s, '_img_inited', False):
+        if not getattr(s, '_img_inited', False) and not getattr(s, '_animating', False):
             if hasattr(s, 'img'):
-                s.img.resize(s.img.parent().width(), s.img.parent().height())
+                # 获取实际的侧栏尺寸（减去margin）
+                parent_width = s.img.parent().width()
+                parent_height = s.img.parent().height()
+                actual_width = parent_width - 10  # 减去左右margin 5px
+                actual_height = parent_height - 10  # 减去上下margin 5px
+                
+                s.img.resize(actual_width, actual_height)
                 p = os.path.join(os.path.dirname(__file__), 'standby.png')
                 q = QPixmap(p)
                 if os.path.exists(p) and not q.isNull():
-                    s.img.setPixmap(q.scaled(s.img.width(), s.img.height(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
+                    s.img.setPixmap(q.scaled(actual_width, actual_height, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
             s._img_inited = True
+
+    def upload_document(s):
+        """上传文档功能"""
+        try:
+            # 打开文件选择对话框
+            file_path, _ = QFileDialog.getOpenFileName(
+                s,
+                "选择要上传的文档",
+                "",
+                "支持的文档格式 (*.docx *.txt *.md);;Word文档 (*.docx);;文本文件 (*.txt);;Markdown文件 (*.md);;所有文件 (*)"
+            )
+            
+            if not file_path:
+                return  # 用户取消选择
+            
+            # 检查文件格式
+            file_ext = Path(file_path).suffix.lower()
+            supported_formats = ['.docx', '.txt', '.md']
+            
+            if file_ext not in supported_formats:
+                QMessageBox.warning(s, "格式不支持", 
+                                   f"不支持的文件格式: {file_ext}\n\n支持的格式: {', '.join(supported_formats)}")
+                return
+            
+            # 检查文件大小 (限制为10MB)
+            file_size = os.path.getsize(file_path)
+            if file_size > 10 * 1024 * 1024:  # 10MB
+                QMessageBox.warning(s, "文件过大", "文件大小不能超过10MB")
+                return
+            
+            # 上传文件到API服务器
+            s.upload_file_to_server(file_path)
+            
+        except Exception as e:
+            QMessageBox.critical(s, "上传错误", f"文档上传失败:\n{str(e)}")
+    
+    def upload_file_to_server(s, file_path):
+        """将文件上传到API服务器"""
+        try:
+            # 显示上传进度
+            s.add_user_message("系统", f"📤 正在上传文档: {Path(file_path).name}")
+            s.progress_widget.set_thinking_mode()
+            s.progress_widget.status_label.setText("上传文档中...")
+            
+            # 准备上传数据
+            api_url = "http://localhost:8000/upload/document"
+            
+            with open(file_path, 'rb') as f:
+                files = {'file': (Path(file_path).name, f, 'application/octet-stream')}
+                data = {'description': f'通过NAGA聊天界面上传的文档'}
+                
+                # 发送上传请求
+                response = requests.post(api_url, files=files, data=data, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                s.progress_widget.stop_loading()
+                s.add_user_message("系统", f"✅ 文档上传成功: {result['filename']}")
+                
+                # 询问用户想要进行什么操作
+                s.show_document_options(result['file_path'], result['filename'])
+            else:
+                s.progress_widget.stop_loading()
+                s.add_user_message("系统", f"❌ 上传失败: {response.text}")
+                
+        except requests.exceptions.ConnectionError:
+            s.progress_widget.stop_loading()
+            s.add_user_message("系统", "❌ 无法连接到API服务器，请确保服务器正在运行")
+        except Exception as e:
+            s.progress_widget.stop_loading()
+            s.add_user_message("系统", f"❌ 上传失败: {str(e)}")
+    
+    def show_document_options(s, file_path, filename):
+        """显示文档处理选项"""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QFrame, QPushButton
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QFont
+        
+        dialog = QDialog(s)
+        dialog.setWindowTitle("文档处理选项")
+        dialog.setFixedSize(650, 480)
+        # 隐藏标题栏的图标按钮
+        dialog.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: white;
+                border: 2px solid #ddd;
+                border-radius: 10px;
+            }
+        """)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(30, 25, 30, 25)
+        layout.setSpacing(20)
+        
+        # 标题
+        title_label = QLabel("文档上传成功")
+        title_font = QFont("Microsoft YaHei", 16, QFont.Bold)
+        title_label.setFont(title_font)
+        title_label.setStyleSheet("color: #2c3e50; margin-bottom: 25px; padding: 15px; min-height: 40px;")
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+        
+        # 文件信息
+        info_label = QLabel(f"文件名: {filename}")
+        info_label.setStyleSheet("color: #34495e; font-size: 14px; padding: 10px;")
+        layout.addWidget(info_label)
+        
+        # 分隔线
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("background-color: #bdc3c7;")
+        layout.addWidget(line)
+        
+        # 操作按钮
+        actions = [
+            ("📖 读取内容", "read", "读取文档的完整内容"),
+            ("🔍 分析文档", "analyze", "分析文档结构和内容"),
+            ("📝 生成摘要", "summarize", "生成文档的简洁摘要")
+        ]
+        
+        for btn_text, action, description in actions:
+            btn = ButtonFactory.create_document_action_button(btn_text)
+            
+            # 添加描述标签
+            desc_label = QLabel(description)
+            desc_label.setStyleSheet("color: #7f8c8d; font-size: 12px; margin-bottom: 10px;")
+            layout.addWidget(desc_label)
+            layout.addWidget(btn)
+            
+            # 连接按钮事件
+            btn.clicked.connect(lambda checked, f=file_path, a=action, d=dialog: s.process_document(f, a, d))
+        
+        # 取消按钮
+        cancel_btn = ButtonFactory.create_cancel_button()
+        cancel_btn.clicked.connect(dialog.close)
+        layout.addWidget(cancel_btn)
+        
+        dialog.exec_()
+    
+    def process_document(s, file_path, action, dialog=None):
+        """处理文档"""
+        if dialog:
+            dialog.close()
+        
+        try:
+            s.add_user_message("系统", f"🔄 正在处理文档: {Path(file_path).name}")
+            s.progress_widget.set_thinking_mode()
+            s.progress_widget.status_label.setText("处理文档中...")
+            
+            # 调用API处理文档
+            api_url = "http://localhost:8000/document/process"
+            data = {
+                "file_path": file_path,
+                "action": action
+            }
+            
+            response = requests.post(api_url, json=data, timeout=60)
+            
+            if response.status_code == 200:
+                result = response.json()
+                s.progress_widget.stop_loading()
+                
+                if action == "read":
+                    s.add_user_message(AI_NAME, f"📖 文档内容:\n\n{result['content']}")
+                elif action == "analyze":
+                    s.add_user_message(AI_NAME, f"🔍 文档分析:\n\n{result['analysis']}")
+                elif action == "summarize":
+                    s.add_user_message(AI_NAME, f"📝 文档摘要:\n\n{result['summary']}")
+            else:
+                s.progress_widget.stop_loading()
+                s.add_user_message("系统", f"❌ 文档处理失败: {response.text}")
+                
+        except requests.exceptions.ConnectionError:
+            s.progress_widget.stop_loading()
+            s.add_user_message("系统", "❌ 无法连接到API服务器，请确保服务器正在运行")
+        except Exception as e:
+            s.progress_widget.stop_loading()
+            s.add_user_message("系统", f"❌ 文档处理失败: {str(e)}")
+    
+    def open_mind_map(s):
+        """打开心智云图"""
+        try:
+            # 检查是否存在知识图谱文件
+            graph_file = "logs/knowledge_graph/graph.html"
+            quintuples_file = "logs/knowledge_graph/quintuples.json"
+            
+            # 如果quintuples.json存在，删除现有的graph.html并重新生成
+            if os.path.exists(quintuples_file):
+                # 如果graph.html存在，先删除它
+                if os.path.exists(graph_file):
+                    try:
+                        os.remove(graph_file)
+                        print(f"已删除旧的graph.html文件")
+                    except Exception as e:
+                        print(f"删除graph.html文件失败: {e}")
+                
+                # 生成新的HTML
+                s.add_user_message("系统", "🔄 正在生成心智云图...")
+                try:
+                    from summer_memory.quintuple_visualize_v2 import visualize_quintuples
+                    visualize_quintuples()
+                    if os.path.exists(graph_file):
+                        import webbrowser
+                        # 获取正确的绝对路径
+                        if os.path.isabs(graph_file):
+                            abs_graph_path = graph_file
+                        else:
+                            # 如果是相对路径，基于项目根目录构建绝对路径
+                            current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                            abs_graph_path = os.path.join(current_dir, graph_file)
+                        
+                        webbrowser.open("file:///" + abs_graph_path)
+                        s.add_user_message("系统", "🧠 心智云图已生成并打开")
+                    else:
+                        s.add_user_message("系统", "❌ 心智云图生成失败")
+                except Exception as e:
+                    s.add_user_message("系统", f"❌ 生成心智云图失败: {str(e)}")
+            else:
+                # 没有五元组数据，提示用户
+                s.add_user_message("系统", "❌ 未找到五元组数据，请先进行对话以生成知识图谱")
+        except Exception as e:
+            s.add_user_message("系统", f"❌ 打开心智云图失败: {str(e)}")
 
 if __name__=="__main__":
     app = QApplication(sys.argv)
